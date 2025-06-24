@@ -11,7 +11,4 @@ soupsieve==2.7
 typing_extensions==4.14.0
 urllib3==2.5.0
 yarl==1.20.1
-requests
-beautifulsoup4
-flask
-
+flask==3.0.3
