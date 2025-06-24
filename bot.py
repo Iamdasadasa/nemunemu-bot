@@ -46,13 +46,13 @@ async def on_ready():
     print(f'{bot.user} でログインしました！（モンスター数: {len(MONSTERS)}）')
 
 # 🎲 ランダムモンスター
-@bot.slash_command(name="monster", description="今日のモンスターをランダムに教えてくれるよ！")
+@bot.slash_command(name="monster", description="モンスターをランダムに教えてくれるよ！")
 async def monster(ctx):
     if not MONSTERS:
         await ctx.respond("モンスターリストが空だよ😢")
     else:
         name = random.choice(MONSTERS)
-        await ctx.respond(f"今日のモンスターは… 🐲 **{name}** だ！")
+        await ctx.respond(f"あなたのモンスターは… 🐲 **{name}** だ！")
 
 # 🔄 再取得コマンド（管理者限定）
 @bot.slash_command(name="update_monsters", description="モンスターリストを最新に更新するよ（管理者限定）")
