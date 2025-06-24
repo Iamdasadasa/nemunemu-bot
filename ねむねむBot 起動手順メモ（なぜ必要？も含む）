@@ -1,0 +1,23 @@
+ ねむねむBot 起動手順メモ（なぜ必要？も含む）
+🔁 なぜこれをやるのか？
+ねむねむBotは、Pythonの**仮想環境（venv）**内に必要な設定が入っているから。
+この仮想環境を毎回「有効」にしないと、Botに必要な機能（discord.py）が使えず、エラーになる。
+
+✅ 毎回Botを動かす前にやること
+bash
+コピーする
+編集する
+# ① 仮想環境を有効にする（これを忘れると動かない）
+source mhw-bot-env/bin/activate
+
+# ② Botを起動（例: bot.py）
+python bot.py
+
+# ③ 終了したいときは Ctrl+C、環境を抜けたいときは：
+deactivate
+🧠 ひとことメモ
+activate は「ねむねむBotを起動する部屋に入る」イメージ
+
+deactivate は「部屋から出る」
+
+仮想環境の中でしかBotは動かない（外だと discord モジュールが見えない）
