@@ -11,7 +11,6 @@ soupsieve==2.7
 typing_extensions==4.14.0
 urllib3==2.5.0
 yarl==1.20.1
-discord.py>=2.0.0,<3.0.0
 requests
 beautifulsoup4
 flask
