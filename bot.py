@@ -1,41 +1,58 @@
-# bot.py
-import discord
+import os
 import random
 import requests
 from bs4 import BeautifulSoup
+from flask import Flask
+import threading
+import discord
+from discord.ext import commands
 
-# 🌐 外部サイトからモンスター名を取得
+# Flask for Render uptime ping
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "👋 ねむねむBot is alive!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# Botのトークン
+TOKEN = os.getenv("TOKEN")
+
+# モンスター取得
 def fetch_monsters():
     url = "https://gamewith.jp/mhwilds/452222"
     res = requests.get(url)
     soup = BeautifulSoup(res.content, "html.parser")
-
     names = []
-    for row in soup.select("table tr")[1:]:
-        cols = row.find_all("td")
-        if cols and len(cols) >= 2:
-            name = cols[1].get_text(strip=True)
-            if name:
-                names.append(name)
+    for li in soup.select("ol.monster_weak_list li[data-name]"):
+        name = li.get("data-name", "").strip()
+        if name:
+            names.append(name)
     return names
 
-# 🔁 起動時に取得
 MONSTERS = fetch_monsters()
 
-# Bot定義
-bot = discord.Bot()
+# Bot設定
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f'{bot.user} でログインしました！（モンスター数: {len(MONSTERS)}）')
+    print(f"✅ {bot.user} でログインしました！")
 
-# 🎲 ランダムモンスター出力
-@bot.slash_command(name="monster", description="今日のモンスターをランダムに教えてくれるよ！")
+@bot.command(name="monster")
 async def monster(ctx):
-    if not MONSTERS:
-        await ctx.respond("モンスターリストが取得できませんでした😢")
-    else:
+    if MONSTERS:
         name = random.choice(MONSTERS)
-        await ctx.respond(f"今日のモンスターは… 🐲 **{name}** だ！")
+        await ctx.send(f"あなたのモンスターは… 🐲 **{name}** だ！")
+    else:
+        await ctx.send("モンスターが見つからなかったよ😢")
 
+# Flask起動（Render対策）
+threading.Thread(target=run_flask, daemon=True).start()
+
+# Bot起動
 bot.run(TOKEN)
