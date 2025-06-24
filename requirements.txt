@@ -3,3 +3,4 @@ charset-normalizer==3.4.2
 idna==3.10
 urllib3==2.5.0
 soupsieve==2.7     # beautifulsoup4の内部で使う
+py-cord==2.6.1
