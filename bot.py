@@ -18,7 +18,7 @@ def dummy_server():
             conn.close()
 
 # 🔑 Discord Botトークン（Renderでは環境変数から）
-TOKEN = os.getenv("MTM4NjkzMDk0MTU0NDYzMjQ5Mg.GkdXwB.HegRcfYwUlsjUbqjZxxrcXtLAyrRWueEirqQFc")
+TOKEN = os.getenv("TOKEN")
 
 # 🌐 モンスター取得関数
 def fetch_monsters():
