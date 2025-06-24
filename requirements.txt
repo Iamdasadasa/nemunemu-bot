@@ -2,7 +2,6 @@ aiohappyeyeballs==2.6.1
 aiohttp==3.12.13
 aiosignal==1.3.2
 attrs==25.3.0
-audioop-lts==0.2.1
 beautifulsoup4==4.13.4
 certifi==2025.6.15
 charset-normalizer==3.4.2
@@ -16,8 +15,4 @@ soupsieve==2.7
 typing_extensions==4.14.0
 urllib3==2.5.0
 yarl==1.20.1
-discord.py>=2.0.0,<3.0.0
-requests
-beautifulsoup4
-flask
-
+flask==3.0.3
