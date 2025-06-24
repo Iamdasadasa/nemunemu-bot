@@ -4,6 +4,20 @@ import random
 import requests
 from bs4 import BeautifulSoup
 
+# Renderが一応Webなのでダミーポート解放用
+import os
+import threading
+import socket
+
+def dummy_server():
+    port = int(os.environ.get("PORT", 10000))  # Renderが指定するPORTを取得
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("0.0.0.0", port))
+        s.listen(1)
+        while True:
+            conn, _ = s.accept()
+            conn.close()
+
 TOKEN ='MTM4NjkzMDk0MTU0NDYzMjQ5Mg.GkdXwB.HegRcfYwUlsjUbqjZxxrcXtLAyrRWueEirqQFc'
 
 MONSTERS = []
@@ -50,5 +64,8 @@ async def update_monsters(ctx):
     global MONSTERS
     MONSTERS = fetch_monsters()
     await ctx.respond(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
+
+# バインドだけするダミーサーバーをバックグラウンドで起動
+threading.Thread(target=dummy_server, daemon=True).start()
 
 bot.run(TOKEN)
