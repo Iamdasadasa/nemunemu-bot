@@ -69,6 +69,7 @@ async def update_monsters(ctx):
 
 @bot.slash_command(name="party", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
+    import asyncio  # ← ここでローカルに import！
     if size < 1:
         await ctx.respond("パーティ人数は1人以上にしてね❌", ephemeral=True)
         return
