@@ -67,9 +67,10 @@ async def update_monsters(ctx):
     MONSTERS = fetch_monsters()
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
 
+# 🧩 スラッシュコマンド：パーティ編成（リアクションで参加を募って自動グループ分け）
 @bot.slash_command(name="party", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
-    import asyncio  # ← ここでローカルに import！
+    import asyncio
     if size < 1:
         await ctx.respond("パーティ人数は1人以上にしてね❌", ephemeral=True)
         return
@@ -78,7 +79,7 @@ async def party(ctx, size: int = 4):
     original = await msg.original_response()
     await original.add_reaction("🙋")
 
-    await asyncio.sleep(20)  # 20秒待機
+    await asyncio.sleep(60)  # 60秒待機
 
     updated = await ctx.channel.fetch_message(original.id)
     users = await updated.reactions[0].users().flatten()
@@ -89,11 +90,25 @@ async def party(ctx, size: int = 4):
         return
 
     random.shuffle(users)
-    groups = [users[i:i + size] for i in range(0, len(users), size)]
+
+    # 均等に分けるグループ数を決定
+    group_count = (len(users) + size - 1) // size  # ceiling division
+    base_size = len(users) // group_count
+    remainder = len(users) % group_count
+
+    groups = []
+    start = 0
+    for i in range(group_count):
+        extra = 1 if i < remainder else 0  # 最初のremainder個のグループに1人追加
+        end = start + base_size + extra
+        groups.append(users[start:end])
+        start = end
+
     result = "\n\n".join(
         [f"🧩 パーティ {i+1}:\n" + "\n".join([f"- {u.mention}" for u in g]) for i, g in enumerate(groups)]
     )
     await ctx.followup.send(f"✅ パーティ編成完了！\n{result}")
+
 
 
 # 🧵 Flask起動（Render用）
