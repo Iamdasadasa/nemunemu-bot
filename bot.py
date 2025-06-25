@@ -59,6 +59,41 @@ async def update_monsters(ctx):
     MONSTERS = fetch_monsters()
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
 
+@bot.command(name="start_party")
+async def start_party(ctx):
+    # 参加者募集メッセージ送信
+    message = await ctx.send("🎉 パーティを作るよ！参加したい人はこのメッセージに ✋ をつけてね！")
+    await message.add_reaction("✋")
+
+    # 20秒待機（リアクションを集める時間）
+    await discord.utils.sleep_until(discord.utils.utcnow() + discord.utils.timedelta(seconds=20))
+    
+    # 再取得（キャッシュでなく最新のリアクションを読むため）
+    message = await ctx.channel.fetch_message(message.id)
+
+    # ✋リアクションを押したユーザーを取得（Botは除外）
+    users = [user async for user in message.reactions[0].users() if not user.bot]
+
+    if not users:
+        await ctx.send("😢 参加者がいなかったよ…")
+        return
+
+    # パーティ編成（1組あたり最大4人）
+    random.shuffle(users)
+    party_size = 4
+    parties = [users[i:i + party_size] for i in range(0, len(users), party_size)]
+
+    # 結果表示
+    result = "🎮 パーティ編成完了！\n\n"
+    for i, party in enumerate(parties):
+        members = " ".join(member.mention for member in party)
+        if len(party) == party_size:
+            result += f"パーティ{i+1}：{members}\n"
+        else:
+            result += f"補欠：{members}\n"
+
+    await ctx.send(result)
+
 # 🧵 Flask起動（Render用）
 threading.Thread(target=run_flask, daemon=True).start()
 
