@@ -68,14 +68,14 @@ async def update_monsters(ctx):
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
 
 # 🧩 スラッシュコマンド：パーティ編成（リアクションで参加を募って自動グループ分け）
-@bot.slash_command(name="party", description="参加リアクションからランダムにパーティを編成するよ！※60秒後に締め切ります")
+@bot.slash_command(name="party", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
     import asyncio
     if size < 1:
         await ctx.respond("パーティ人数は1人以上にしてね❌", ephemeral=True)
         return
 
-    msg = await ctx.respond(f"🙋‍♂️ パーティ編成！参加したい人はリアクションしてね！（{size}人ずつ）")
+    msg = await ctx.respond(f"🙋‍♂️ パーティ編成！参加したい人はリアクションしてね！（{size}人ずつ/※60秒後に締め切ります）")
     original = await msg.original_response()
     await original.add_reaction("🙋")
 
