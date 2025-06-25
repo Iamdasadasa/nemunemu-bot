@@ -6,6 +6,8 @@ from flask import Flask
 import threading
 import discord
 from discord.ext import commands
+import asyncio
+
 
 # 🌐 Flaskサーバー（RenderのHTTPチェック用）
 app = Flask(__name__)
