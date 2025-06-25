@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 from flask import Flask
 import threading
 import discord
+from discord.ext import commands
 
 # 🌐 Flaskサーバー（RenderのHTTPチェック用）
 app = Flask(__name__)
@@ -36,7 +37,12 @@ def fetch_monsters():
 MONSTERS = fetch_monsters()
 
 # 🤖 Discord Bot設定（スラッシュコマンド対応）
-bot = discord.Bot()
+#bot = discord.Bot()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.reactions = True
+bot = discord.Bot(intents=intents)
+
 
 @bot.event
 async def on_ready():
@@ -59,40 +65,33 @@ async def update_monsters(ctx):
     MONSTERS = fetch_monsters()
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
 
-@bot.command(name="start_party")
-async def start_party(ctx):
-    # 参加者募集メッセージ送信
-    message = await ctx.send("🎉 パーティを作るよ！参加したい人はこのメッセージに ✋ をつけてね！")
-    await message.add_reaction("✋")
-
-    # 20秒待機（リアクションを集める時間）
-    await discord.utils.sleep_until(discord.utils.utcnow() + discord.utils.timedelta(seconds=20))
-    
-    # 再取得（キャッシュでなく最新のリアクションを読むため）
-    message = await ctx.channel.fetch_message(message.id)
-
-    # ✋リアクションを押したユーザーを取得（Botは除外）
-    users = [user async for user in message.reactions[0].users() if not user.bot]
-
-    if not users:
-        await ctx.send("😢 参加者がいなかったよ…")
+@bot.slash_command(name="party", description="参加リアクションからランダムにパーティを編成するよ！")
+async def party(ctx, size: int = 4):
+    if size < 1:
+        await ctx.respond("パーティ人数は1人以上にしてね❌", ephemeral=True)
         return
 
-    # パーティ編成（1組あたり最大4人）
+    msg = await ctx.respond(f"🙋‍♂️ パーティ編成！参加したい人はリアクションしてね！（{size}人ずつ）")
+    original = await msg.original_response()
+    await original.add_reaction("🙋")
+
+    await asyncio.sleep(20)  # 20秒待機
+
+    updated = await ctx.channel.fetch_message(original.id)
+    users = await updated.reactions[0].users().flatten()
+    users = [u for u in users if not u.bot]
+
+    if len(users) < size:
+        await ctx.followup.send("😢 参加者が足りなかったよ…")
+        return
+
     random.shuffle(users)
-    party_size = 4
-    parties = [users[i:i + party_size] for i in range(0, len(users), party_size)]
+    groups = [users[i:i + size] for i in range(0, len(users), size)]
+    result = "\n\n".join(
+        [f"🧩 パーティ {i+1}:\n" + "\n".join([f"- {u.mention}" for u in g]) for i, g in enumerate(groups)]
+    )
+    await ctx.followup.send(f"✅ パーティ編成完了！\n{result}")
 
-    # 結果表示
-    result = "🎮 パーティ編成完了！\n\n"
-    for i, party in enumerate(parties):
-        members = " ".join(member.mention for member in party)
-        if len(party) == party_size:
-            result += f"パーティ{i+1}：{members}\n"
-        else:
-            result += f"補欠：{members}\n"
-
-    await ctx.send(result)
 
 # 🧵 Flask起動（Render用）
 threading.Thread(target=run_flask, daemon=True).start()
