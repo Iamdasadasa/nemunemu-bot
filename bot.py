@@ -51,13 +51,9 @@ async def monster(ctx):
     else:
         await ctx.respond("モンスターが見つからなかったよ😢")
 
-# 🔄 スラッシュコマンド：モンスターリスト更新（管理者限定）
-@bot.slash_command(name="update_monsters", description="モンスターリストを更新するよ（管理者専用）")
+# 🔄 スラッシュコマンド：モンスターリスト更新（誰でも可）
+@bot.slash_command(name="update_monsters", description="モンスターリストを更新するよ")
 async def update_monsters(ctx):
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("このコマンドは管理者だけが使えるよ❌", ephemeral=True)
-        return
-
     await ctx.respond("🔄 モンスターリストを更新中…")
     global MONSTERS
     MONSTERS = fetch_monsters()
