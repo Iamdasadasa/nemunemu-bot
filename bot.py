@@ -162,7 +162,7 @@ async def party(ctx, size: int = 4):
     await ctx.followup.send(f"✅ パーティ編成完了！\n{result}")
 
 # --- イベント取得　---
-EVNETURL = "https://gamewith.jp/mhwilds/504611"
+EVNETURL = "https://gamewith.jp/mhwilds/484117"
 def fetch_events():
     res = requests.get(EVNETURL)
     soup = BeautifulSoup(res.content, "html.parser")
