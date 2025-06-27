@@ -109,7 +109,7 @@ async def on_ready():
     print(f"✅ {bot.user} でログインしました！")
 
 #スラッシュコマンド：モンスターランダム排出　---
-@bot.slash_command(name="monster", description="モンスターをランダムに教えてくれるよ！")
+@bot.slash_command(name="モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
 async def monster(ctx):
     if MONSTERS:
         name = random.choice(MONSTERS)
@@ -118,7 +118,7 @@ async def monster(ctx):
         await ctx.respond("モンスターが見つからなかったよ😢")
 
 #スラッシュコマンド：モンスターリスト更新設定　---
-@bot.slash_command(name="update_monsters", description="モンスターリストを更新するよ")
+@bot.slash_command(name="モンスターリスト更新", description="モンスターリストを更新するよ")
 async def update_monsters(ctx):
     await ctx.respond("🔄 モンスターリストを更新中…")
     global MONSTERS
@@ -126,7 +126,7 @@ async def update_monsters(ctx):
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
 
 #スラッシュコマンド：パーティ設定　---
-@bot.slash_command(name="party", description="参加リアクションからランダムにパーティを編成するよ！")
+@bot.slash_command(name="メンバー分け", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
     if size < 1:
         await ctx.respond("パーティ人数は1人以上にしてね❌", ephemeral=True)
@@ -166,65 +166,80 @@ EVNETURL = "https://gamewith.jp/mhwilds/484117"
 def fetch_events():
     res = requests.get(EVNETURL)
     soup = BeautifulSoup(res.content, "html.parser")
-    tables = soup.find_all("table", class_="quest_board")
+    items = soup.find_all("li", class_="_item")
 
     current_events = []
     upcoming_events = []
 
-    for table in tables:
-        rows = table.find_all("tr")
-        event_info = {}
-        for row in rows:
-            th = row.find("th")
-            td = row.find("td")
-            if not th or not td:
-                continue
+    for item in items:
+        title_tag = item.find("a")
+        name = title_tag.text.strip()
+        link = title_tag["href"]
+        held_div = item.find("div", class_="_held")
+        status = held_div.text.strip() if held_div else "不明"
 
-            title = th.text.strip()
-            value = td.get_text(separator="\n", strip=True)
+        body = item.find("div", class_="_body")
+        if not body:
+            continue
 
-            if "開催期間" in title:
-                event_info["期間"] = value
-            elif "ミッション" in title:
-                event_info["ミッション"] = value
-            elif "マップ" in title:
-                event_info["マップ"] = value
-            elif "目玉報酬" in title:
-                event_info["報酬"] = value
+        info = body.find("div", class_="_info")
+        if not info:
+            continue
 
-        if event_info:
-            if "〜" in event_info.get("期間", ""):
-                current_events.append(event_info)
-            elif "〜" not in event_info.get("期間", ""):
-                upcoming_events.append(event_info)
+        labels = info.find_all("div", class_="_label-9")
+        values = info.find_all("div")[1::2]  # ラベルの次にくる内容が対象
+
+        event_info = {"タイトル": name, "URL": link}
+        for label, value in zip(labels, values):
+            key = label.text.strip()
+            val = value.get_text(separator="\n", strip=True)
+            event_info[key] = val
+
+        if "開催中" in status:
+            current_events.append(event_info)
+        elif "開催予定" in status:
+            upcoming_events.append(event_info)
 
     return current_events, upcoming_events
 
-#スラッシュコマンド：開催中イベント表示
-@bot.slash_command(name="開催中", description="現在開催中のイベントを表示するよ！")
+
+# スラッシュコマンド：開催中イベント
+@bot.slash_command(name="開催中", description="現在開催中のイベント一覧を表示します")
 async def current(ctx):
-    await ctx.respond("🔍 現在開催中のイベントを取得中…")
     events, _ = fetch_events()
     if not events:
-        await ctx.send_followup("現在開催中のイベントは見つかりませんでした。")
+        await ctx.respond("現在開催中のイベントは見つかりませんでした。")
         return
 
     for e in events:
-        msg = f"🎯 **{e.get('ミッション')}**\n📍 {e.get('マップ')}\n🎁 {e.get('報酬')}\n📅 {e.get('期間')}"
-        await ctx.send_followup(msg)
+        msg = (
+            f"🎯 **{e.get('タイトル')}**\n"
+            f"📅 {e.get('開催期間')}\n"
+            f"🎯 {e.get('目標')}\n"
+            f"🎁 {e.get('目玉報酬')}\n"
+            f"📝 {e.get('条件')}\n"
+            f"🔗 <{e.get('URL')}>"
+        )
+        await ctx.respond(msg)
 
-#スラッシュコマンド：開催予定イベント表示
-@bot.slash_command(name="開催予定", description="これから開催されるイベントを表示するよ！")
+# スラッシュコマンド：開催予定イベント
+@bot.slash_command(name="開催予定", description="今後開催予定のイベント一覧を表示します")
 async def upcoming(ctx):
-    await ctx.respond("🔍 開催予定のイベントを取得中…")
     _, events = fetch_events()
     if not events:
-        await ctx.send_followup("開催予定のイベントは見つかりませんでした。")
+        await ctx.respond("開催予定のイベントは見つかりませんでした。")
         return
 
     for e in events:
-        msg = f"🕒 **{e.get('ミッション')}**\n📍 {e.get('マップ')}\n🎁 {e.get('報酬')}\n📅 {e.get('期間')}"
-        await ctx.send_followup(msg)
+        msg = (
+            f"🕒 **{e.get('タイトル')}**\n"
+            f"📅 {e.get('開催期間')}\n"
+            f"🎯 {e.get('目標')}\n"
+            f"🎁 {e.get('目玉報酬')}\n"
+            f"📝 {e.get('条件')}\n"
+            f"🔗 <{e.get('URL')}>"
+        )
+        await ctx.respond(msg)
 
 ###Bot Run###
 bot.run(TOKEN)
