@@ -21,10 +21,10 @@ model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 
 # --- X (v2 API) 認証 ---
 client = tweepy.Client(
-    consumer_key=os.getenv("X_API_KEY"),
-    consumer_secret=os.getenv("X_API_SECRET"),
-    access_token=os.getenv("X_ACCESS_TOKEN"),
-    access_token_secret=os.getenv("X_ACCESS_TOKEN_SECRET")
+    consumer_key=os.getenv("API_KEY"),
+    consumer_secret=os.getenv("API_SECRET"),
+    access_token=os.getenv("ACCESS_TOKEN"),
+    access_token_secret=os.getenv("ACCESS_TOKEN_SECRET")
 )
 
 # --- 固定ハッシュタグ ---
@@ -84,7 +84,7 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 
 # --- Discord Bot 設定 ---
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
