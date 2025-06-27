@@ -224,7 +224,7 @@ def fetch_events():
 
 
 # スラッシュコマンド：開催中イベント
-@bot.slash_command(name="開催中", description="現在開催中のイベント一覧を表示します")
+@bot.slash_command(name="イベント【開催中】", description="現在開催中のイベント一覧を表示します")
 async def current(ctx):
     events, _ = fetch_events()
     if not events:
@@ -244,7 +244,7 @@ async def current(ctx):
         await ctx.respond(msg)
 
 # スラッシュコマンド：開催予定イベント
-@bot.slash_command(name="開催予定", description="今後開催予定のイベント一覧を表示します")
+@bot.slash_command(name="イベント【開催予定】", description="今後開催予定のイベント一覧を表示します")
 async def upcoming(ctx):
     _, events = fetch_events()
     if not events:
@@ -253,9 +253,10 @@ async def upcoming(ctx):
 
     for e in events:
         msg = (
+            F"\n"
             f"🎯 **{e.get('タイトル', '')}**\n"
             f"📅 {e.get('開催期間', '')}\n"
-            f"🎯 {e.get('目標', '')}\n"
+            f"🎯 __{e.get('目標', '')}__\n"
             f"🎁 {e.get('目玉報酬', '')}\n"
             f"📝 {e.get('条件', '')}\n"
             f"🔗 <{e.get('URL', '')}>"
