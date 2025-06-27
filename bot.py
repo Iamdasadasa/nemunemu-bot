@@ -224,7 +224,7 @@ def fetch_events():
 
 
 # スラッシュコマンド：開催中イベント
-@bot.slash_command(name="イベント【開催中】", description="現在開催中のイベント一覧を表示します")
+@bot.slash_command(name="イベント#開催中#", description="現在開催中のイベント一覧を表示します")
 async def current(ctx):
     events, _ = fetch_events()
     if not events:
@@ -244,7 +244,7 @@ async def current(ctx):
         await ctx.respond(msg)
 
 # スラッシュコマンド：開催予定イベント
-@bot.slash_command(name="イベント【開催予定】", description="今後開催予定のイベント一覧を表示します")
+@bot.slash_command(name="イベント#開催予定#", description="今後開催予定のイベント一覧を表示します")
 async def upcoming(ctx):
     _, events = fetch_events()
     if not events:
