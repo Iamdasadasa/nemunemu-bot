@@ -6,6 +6,7 @@ import discord
 from bs4 import BeautifulSoup
 from flask import Flask, request
 from discord.ext import commands
+from discord import option
 import google.generativeai as genai
 import tweepy
 
@@ -94,7 +95,7 @@ intents.message_content = True
 intents.reactions = True
 bot = discord.Bot(intents=intents)
 
-# --- モンスター取得関数 ---
+#スラッシュコマンド：モンスター取得関数 ---
 def fetch_monsters():
     url = "https://gamewith.jp/mhwilds/452222"
     res = requests.get(url)
@@ -107,7 +108,7 @@ MONSTERS = fetch_monsters()
 async def on_ready():
     print(f"✅ {bot.user} でログインしました！")
 
-# --- モンスターランダム排出　---
+#スラッシュコマンド：モンスターランダム排出　---
 @bot.slash_command(name="monster", description="モンスターをランダムに教えてくれるよ！")
 async def monster(ctx):
     if MONSTERS:
@@ -116,7 +117,7 @@ async def monster(ctx):
     else:
         await ctx.respond("モンスターが見つからなかったよ😢")
 
-# --- モンスターリスト更新設定　---
+#スラッシュコマンド：モンスターリスト更新設定　---
 @bot.slash_command(name="update_monsters", description="モンスターリストを更新するよ")
 async def update_monsters(ctx):
     await ctx.respond("🔄 モンスターリストを更新中…")
@@ -124,7 +125,7 @@ async def update_monsters(ctx):
     MONSTERS = fetch_monsters()
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
 
-# --- パーティ設定　---
+#スラッシュコマンド：パーティ設定　---
 @bot.slash_command(name="party", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
     if size < 1:
@@ -160,4 +161,70 @@ async def party(ctx, size: int = 4):
     result = "\n\n".join([f"🧩 パーティ {i+1}:\n" + "\n".join([f"- {u.mention}" for u in g]) for i, g in enumerate(groups)])
     await ctx.followup.send(f"✅ パーティ編成完了！\n{result}")
 
+# --- イベント取得　---
+EVNETURL = "https://gamewith.jp/mhwilds/504611"
+def fetch_events():
+    res = requests.get(EVNETURL)
+    soup = BeautifulSoup(res.content, "html.parser")
+    tables = soup.find_all("table", class_="quest_board")
+
+    current_events = []
+    upcoming_events = []
+
+    for table in tables:
+        rows = table.find_all("tr")
+        event_info = {}
+        for row in rows:
+            th = row.find("th")
+            td = row.find("td")
+            if not th or not td:
+                continue
+
+            title = th.text.strip()
+            value = td.get_text(separator="\n", strip=True)
+
+            if "開催期間" in title:
+                event_info["期間"] = value
+            elif "ミッション" in title:
+                event_info["ミッション"] = value
+            elif "マップ" in title:
+                event_info["マップ"] = value
+            elif "目玉報酬" in title:
+                event_info["報酬"] = value
+
+        if event_info:
+            if "〜" in event_info.get("期間", ""):
+                current_events.append(event_info)
+            elif "〜" not in event_info.get("期間", ""):
+                upcoming_events.append(event_info)
+
+    return current_events, upcoming_events
+
+#スラッシュコマンド：開催中イベント表示
+@bot.slash_command(name="開催中", description="現在開催中のイベントを表示するよ！")
+async def current(ctx):
+    await ctx.respond("🔍 現在開催中のイベントを取得中…")
+    events, _ = fetch_events()
+    if not events:
+        await ctx.send_followup("現在開催中のイベントは見つかりませんでした。")
+        return
+
+    for e in events:
+        msg = f"🎯 **{e.get('ミッション')}**\n📍 {e.get('マップ')}\n🎁 {e.get('報酬')}\n📅 {e.get('期間')}"
+        await ctx.send_followup(msg)
+
+#スラッシュコマンド：開催予定イベント表示
+@bot.slash_command(name="開催予定", description="これから開催されるイベントを表示するよ！")
+async def upcoming(ctx):
+    await ctx.respond("🔍 開催予定のイベントを取得中…")
+    _, events = fetch_events()
+    if not events:
+        await ctx.send_followup("開催予定のイベントは見つかりませんでした。")
+        return
+
+    for e in events:
+        msg = f"🕒 **{e.get('ミッション')}**\n📍 {e.get('マップ')}\n🎁 {e.get('報酬')}\n📅 {e.get('期間')}"
+        await ctx.send_followup(msg)
+
+###Bot Run###
 bot.run(TOKEN)
