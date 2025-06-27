@@ -126,6 +126,7 @@ async def update_monsters(ctx):
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
 
 #スラッシュコマンド：パーティ設定　---
+import asyncio
 @bot.slash_command(name="メンバー分け", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
     if size < 1:
@@ -162,20 +163,26 @@ async def party(ctx, size: int = 4):
     await ctx.followup.send(f"✅ パーティ編成完了！\n{result}")
 
 # --- イベント取得　---
-EVNETURL = "https://gamewith.jp/mhwilds/484117"
+EVENT_URL = "https://gamewith.jp/mhwilds/484117"
+
 def fetch_events():
-    res = requests.get(EVNETURL)
+    res = requests.get(EVENT_URL)
     soup = BeautifulSoup(res.content, "html.parser")
-    items = soup.find_all("li", class_="_item")
+    items = soup.find_all("div", class_="_item")  # ← div に変更
 
     current_events = []
     upcoming_events = []
 
     for item in items:
-        title_tag = item.find("a")
+        head = item.find("div", class_="_head")
+        title_tag = head.find("a") if head else None
+        held_div = head.find("div", class_="_held") if head else None
+
+        if not title_tag:
+            continue
+
         name = title_tag.text.strip()
         link = title_tag["href"]
-        held_div = item.find("div", class_="_held")
         status = held_div.text.strip() if held_div else "不明"
 
         body = item.find("div", class_="_body")
@@ -186,8 +193,20 @@ def fetch_events():
         if not info:
             continue
 
+        # ラベルと値を順に取得（HTML構造に基づいて）
         labels = info.find_all("div", class_="_label-9")
-        values = info.find_all("div")[1::2]  # ラベルの次にくる内容が対象
+        all_divs = info.find_all("div")
+        values = []
+        skip_next = False
+        for i, div in enumerate(all_divs):
+            if skip_next:
+                skip_next = False
+                continue
+            if div in labels:
+                # 次のdivが値
+                if i + 1 < len(all_divs):
+                    values.append(all_divs[i + 1])
+                    skip_next = True
 
         event_info = {"タイトル": name, "URL": link}
         for label, value in zip(labels, values):
@@ -203,6 +222,7 @@ def fetch_events():
     return current_events, upcoming_events
 
 
+
 # スラッシュコマンド：開催中イベント
 @bot.slash_command(name="開催中", description="現在開催中のイベント一覧を表示します")
 async def current(ctx):
@@ -213,13 +233,14 @@ async def current(ctx):
 
     for e in events:
         msg = (
-            f"🎯 **{e.get('タイトル')}**\n"
-            f"📅 {e.get('開催期間')}\n"
-            f"🎯 {e.get('目標')}\n"
-            f"🎁 {e.get('目玉報酬')}\n"
-            f"📝 {e.get('条件')}\n"
-            f"🔗 <{e.get('URL')}>"
+            f"🎯 **{e.get('タイトル', '')}**\n"
+            f"📅 {e.get('開催期間', '')}\n"
+            f"🎯 {e.get('目標', '')}\n"
+            f"🎁 {e.get('目玉報酬', '')}\n"
+            f"📝 {e.get('条件', '')}\n"
+            f"🔗 <{e.get('URL', '')}>"
         )
+
         await ctx.respond(msg)
 
 # スラッシュコマンド：開催予定イベント
@@ -232,14 +253,15 @@ async def upcoming(ctx):
 
     for e in events:
         msg = (
-            f"🕒 **{e.get('タイトル')}**\n"
-            f"📅 {e.get('開催期間')}\n"
-            f"🎯 {e.get('目標')}\n"
-            f"🎁 {e.get('目玉報酬')}\n"
-            f"📝 {e.get('条件')}\n"
-            f"🔗 <{e.get('URL')}>"
+            f"🎯 **{e.get('タイトル', '')}**\n"
+            f"📅 {e.get('開催期間', '')}\n"
+            f"🎯 {e.get('目標', '')}\n"
+            f"🎁 {e.get('目玉報酬', '')}\n"
+            f"📝 {e.get('条件', '')}\n"
+            f"🔗 <{e.get('URL', '')}>"
         )
-        await ctx.respond(msg)
+
+        await ctx.respond(msg)  
 
 ###Bot Run###
 bot.run(TOKEN)
