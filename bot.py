@@ -48,9 +48,12 @@ def webhook_handler():
     if not PROMPT:
         return "❌ PROMPT_TEXT の環境変数が設定されていません。", 500
     try:
+        # Gemini で文章生成
         response = model.generate_content(PROMPT)
         result = response.text.strip()
         tweet = f"{result}\n{HASHTAGS.strip()}"
+
+        # X (v2) に投稿
         client.create_tweet(text=tweet)
         print(f"✅ 投稿成功:\n{tweet}")
         return f"✅ ツイート完了:\n{tweet}"
