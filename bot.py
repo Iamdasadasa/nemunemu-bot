@@ -58,7 +58,7 @@ async def on_member_join(member):
     channel = bot.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
     if channel:
         username = member.display_name  # サーバー上での表示名（ニックネームがあればそれ）
-        await channel.sendd(f"👋 ようこそ、{username} さん！")
+        await channel.send(f"👋 ようこそ、{username} さん！")
 
 # --- Xポスト　---
 @app.route("/webhook", methods=["POST"])
