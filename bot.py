@@ -10,6 +10,13 @@ from discord import option
 import google.generativeai as genai
 import tweepy
 
+# --- Discord共通設定 ---
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True  
+intents.reactions = True
+bot = discord.Bot(intents=intents)
+
 # --- Flaskアプリ共通 ---
 app = Flask(__name__)
 
@@ -42,6 +49,16 @@ HASHTAGS = """
 @app.route("/")
 def home():
     return "👋 統合Bot is alive!", 200
+
+# --- 新規メンバーのお知らせ（特定チャンネル)　---    
+REPRESENTATIVE_COUNCIL_CHANNEL_ID = 123456789012345678  # ← 対象のチャンネルIDに書き換えてください！
+
+@bot.event
+async def on_member_join(member):
+    channel = bot.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
+    if channel:
+        username = member.display_name  # サーバー上での表示名（ニックネームがあればそれ）
+        await channel.sendd(f"👋 ようこそ、{username} さん！")
 
 # --- Xポスト　---
 @app.route("/webhook", methods=["POST"])
@@ -90,10 +107,7 @@ threading.Thread(target=run_flask, daemon=True).start()
 # --- Discord Bot 設定 ---
 TOKEN = os.getenv("TOKEN")
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.reactions = True
-bot = discord.Bot(intents=intents)
+
 
 #スラッシュコマンド：モンスター取得関数 ---
 def fetch_monsters():
