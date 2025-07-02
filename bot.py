@@ -58,7 +58,7 @@ async def on_member_join(member):
     channel = bot.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
     if channel:
         username = member.display_name  # サーバー上での表示名（ニックネームがあればそれ）
-        await channel.send(f"管理メンバーの皆さま、お手数ですが新たに {username} さんがサーバーに参加されました。\n"
+        await channel.send(f"管理メンバーの皆さま、お手数ですが新たに【 {username}】 さんがサーバーに参加されました。\n"
  "もしお時間のある際にログインされることがありましたら、サークルの承認対応をしていただけますと幸いです。\nよろしくお願いいたします。")
 
 # --- Xポスト　---
