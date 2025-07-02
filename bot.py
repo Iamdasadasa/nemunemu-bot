@@ -51,7 +51,7 @@ def home():
     return "👋 統合Bot is alive!", 200
 
 # --- 新規メンバーのお知らせ（特定チャンネル)　---    
-REPRESENTATIVE_COUNCIL_CHANNEL_ID = 123456789012345678  # ← 対象のチャンネルIDに書き換えてください！
+REPRESENTATIVE_COUNCIL_CHANNEL_ID = 1389881477033885716  # ← 対象のチャンネルIDに書き換えてください！
 
 @bot.event
 async def on_member_join(member):
