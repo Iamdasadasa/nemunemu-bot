@@ -71,34 +71,62 @@ def home():
     # 対象のロールIDとログを送信するチャンネルID
     ROLE_ID = 1390261208782868590
     REPRESENTATIVE_COUNCIL_CHANNEL_ID = 1388357389886951616
+    GUIDE_CHANNEL_ID = 1389290096498315364  # 👈 案内メッセージを送るチャンネルIDに書き換えてね！
 
-    @bot.event
-    async def on_member_join(member):
-        role = member.guild.get_role(ROLE_ID)
-        log_channel = member.guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
+@bot.event
+async def on_member_join(member):
+    guild = member.guild
+    role = guild.get_role(ROLE_ID)
+    log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
+    guide_channel = guild.get_channel(GUIDE_CHANNEL_ID)
 
-        if role:
-            try:
-                await member.add_roles(role)
-                log_msg = f"✅ {member.display_name} さんにロール「{role.name}」を付与しました。"
-                print(log_msg)
-                if log_channel:
-                    await log_channel.send(log_msg)
-            except discord.Forbidden:
-                log_msg = "⚠️ 権限不足でロールを付与できませんでした。"
-                print(log_msg)
-                if log_channel:
-                    await log_channel.send(log_msg)
-            except Exception as e:
-                log_msg = f"❌ エラーが発生しました: {e}"
-                print(log_msg)
-                if log_channel:
-                    await log_channel.send(log_msg)
-        else:
-            log_msg = f"⚠️ ID {ROLE_ID} のロールが見つかりません。"
+    # --- ロール付与処理 ---
+    if role:
+        try:
+            await member.add_roles(role)
+            log_msg = f"✅ {member.display_name} さんにロール「{role.name}」を付与しました。"
             print(log_msg)
             if log_channel:
                 await log_channel.send(log_msg)
+        except discord.Forbidden:
+            log_msg = "⚠️ 権限不足でロールを付与できませんでした。"
+            print(log_msg)
+            if log_channel:
+                await log_channel.send(log_msg)
+        except Exception as e:
+            log_msg = f"❌ エラーが発生しました: {e}"
+            print(log_msg)
+            if log_channel:
+                await log_channel.send(log_msg)
+    else:
+        log_msg = f"⚠️ ID {ROLE_ID} のロールが見つかりません。"
+        print(log_msg)
+        if log_channel:
+            await log_channel.send(log_msg)
+
+ 
+ # --- 案内メッセージ送信 ---
+    WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")  # Renderの環境変数から取得
+    if guide_channel:
+        try:
+            guide_msg = ""
+
+            # Renderの環境変数が設定されていたら先頭に追加
+            if WELCOME_MESSAGE_EXTRA.strip():
+                guide_msg += f"{WELCOME_MESSAGE_EXTRA.strip()}\n\n"
+
+            guide_msg += (
+                f"👋 ようこそ {member.mention} さん！\n\n"
+                "こちらは初めての方向けの案内チャンネルです。\n"
+                "このメッセージにリアクションしていただくことで、次のステップへ進めます。\n"
+                "不明点があればお気軽にお尋ねください！"
+            )
+
+            await guide_channel.send(guide_msg)
+
+        except Exception as e:
+            if log_channel:
+                await log_channel.send(f"⚠️ 案内メッセージ送信に失敗しました: {e}")
 
 # --- Xポスト　---
     @app.route("/webhook", methods=["POST"])
