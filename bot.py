@@ -169,12 +169,12 @@ def check_rate_limit():
         except Exception as e:
             return f"❌ レート情報の取得に失敗しました: {e}", 500
 
-# --- Flaskをバックグラウンドで実行 ---
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-    threading.Thread(target=run_flask, daemon=True).start()
+# Flask をバックグラウンドで起動
+threading.Thread(target=run_flask, daemon=True).start()
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # 
