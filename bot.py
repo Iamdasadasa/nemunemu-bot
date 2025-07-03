@@ -16,6 +16,7 @@ intents.message_content = True
 intents.members = True  
 intents.reactions = True
 bot = discord.Bot(intents=intents)
+TOKEN = os.getenv("TOKEN")
 
 # --- Flaskアプリ共通 ---
 app = Flask(__name__)
@@ -182,7 +183,6 @@ def run_flask():
 # # # # # # # # # # # # # # # # # # # # # # # # # 
 
 # --- Discord Bot 設定 ---
-    TOKEN = os.getenv("TOKEN")
 
     #スラッシュコマンド：モンスター取得関数 ---
     def fetch_monsters():
