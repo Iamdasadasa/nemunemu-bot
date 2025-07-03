@@ -128,8 +128,8 @@ async def on_member_join(member):
             if log_channel:
                 await log_channel.send(f"⚠️ 案内メッセージ送信に失敗しました: {e}")
 
-次はリアクションしたら自動で一般ロール付与
-→一般ロールが見れるように各チャンネル調整
+#次はリアクションしたら自動で一般ロール付与
+#→一般ロールが見れるように各チャンネル調整
 
 # --- Xポスト　---
 @app.route("/webhook", methods=["POST"])
