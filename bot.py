@@ -69,9 +69,9 @@ async def on_member_join(member):
 
 # --- サーバー参加時に「初めてロール」を付与 --- 
     # 対象のロールIDとログを送信するチャンネルID
-    ROLE_ID = 1390261208782868590
-    REPRESENTATIVE_COUNCIL_CHANNEL_ID = 1388357389886951616
-    GUIDE_CHANNEL_ID = 1389290096498315364  # 👈 案内メッセージを送るチャンネルIDに書き換えてね！
+ROLE_ID = 1390261208782868590
+REPRESENTATIVE_COUNCIL_CHANNEL_ID = 1388357389886951616
+GUIDE_CHANNEL_ID = 1389290096498315364  # 👈 案内メッセージを送るチャンネルIDに書き換えてね！
 
 @bot.event
 async def on_member_join(member):
