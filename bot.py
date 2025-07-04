@@ -130,6 +130,7 @@ async def on_member_join(member):
 
     if guide_channel:
         try:
+            await asyncio.sleep(5)  # 数秒待ってから送信（アクセス権が反映されるまで待機）
             guide_msg = ""
             if WELCOME_MESSAGE_EXTRA.strip():
                 guide_msg += f"{WELCOME_MESSAGE_EXTRA.strip()}\n\n"
