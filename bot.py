@@ -9,11 +9,12 @@ from discord.ext import commands
 from discord import option
 import google.generativeai as genai
 import tweepy
+import asyncio
 
 # --- Discord共通設定 ---
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  
+intents.members = True
 intents.reactions = True
 bot = discord.Bot(intents=intents)
 TOKEN = os.getenv("TOKEN")
@@ -55,25 +56,12 @@ def home():
 ##################自動対応系#######################
 #################################################
 # # # # # # # # # # # # # # # # # # # # # # # # # 
-
-# --- 新規メンバーのお知らせ（特定チャンネル)　---    
-REPRESENTATIVE_COUNCIL_CHANNEL_ID = 1388357389886951616
-#1389881477033885716
-# --- 管理チャンネルに新規メンバー通知　---    
-@bot.event
-async def on_member_join(member):
-        channel = bot.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
-        if channel:
-            username = member.display_name  # サーバー上での表示名（ニックネームがあればそれ）
-            await channel.send(f"管理メンバーの皆さま、お手数ですが新たに\n【 {username}】\nさんがサーバーに参加されました。\n"
-    "もしお時間のある際にログインされることがありましたら、サークルの承認対応をしていただけますと幸いです。\nよろしくお願いいたします。")
-
 # --- サーバー参加時に「初めてロール」を付与 --- 
-    # 対象のロールIDとログを送信するチャンネルID
 ROLE_ID = 1390261208782868590
 REPRESENTATIVE_COUNCIL_CHANNEL_ID = 1388357389886951616
+#1389881477033885716
 GUIDE_CHANNEL_ID = 1389290096498315364  # 👈 案内メッセージを送るチャンネルIDに書き換えてね！
-
+WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")
 @bot.event
 async def on_member_join(member):
     guild = member.guild
@@ -105,76 +93,71 @@ async def on_member_join(member):
         if log_channel:
             await log_channel.send(log_msg)
 
- 
- # --- 案内メッセージ送信 ---
-    WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")  # Renderの環境変数から取得
+    # 新規参加通知
+    if log_channel:
+        await log_channel.send(
+            f"管理メンバーの皆さま、お手数ですが新たに\n【 {member.display_name} 】\nさんがサーバーに参加されました。\n"
+            "もしお時間のある際にログインされることがありましたら、サークルの承認対応をしていただけますと幸いです。\nよろしくお願いいたします。"
+        )
+
+    # 案内メッセージ
     if guide_channel:
         try:
             guide_msg = ""
-
-            # Renderの環境変数が設定されていたら先頭に追加
+# Renderの環境変数が設定されていたら先頭に追加
             if WELCOME_MESSAGE_EXTRA.strip():
                 guide_msg += f"{WELCOME_MESSAGE_EXTRA.strip()}\n\n"
-
             guide_msg += (
                 f"👋 ようこそ {member.mention} さん！\n\n"
                 "こちらは初めての方向けの案内チャンネルです。\n"
                 "このメッセージにリアクションしていただくことで、次のステップへ進めます。\n"
                 "不明点があればお気軽にお尋ねください！"
             )
-
             await guide_channel.send(guide_msg)
-
         except Exception as e:
             if log_channel:
                 await log_channel.send(f"⚠️ 案内メッセージ送信に失敗しました: {e}")
 
 #次はリアクションしたら自動で一般ロール付与
 #一般ロールが見れるように各チャンネル調整
-
 # --- Xポスト　---
 @app.route("/webhook", methods=["POST"])
 def webhook_handler():
-        if not PROMPT:
-            return "❌ PROMPT_TEXT の環境変数が設定されていません。", 500
-        try:
-            # Gemini で文章生成
-            response = model.generate_content(PROMPT)
-            result = response.text.strip()
-            tweet = f"{result}\n{HASHTAGS.strip()}"
-
-            # X (v2) に投稿
-            client.create_tweet(text=tweet)
-            print(f"✅ 投稿成功:\n{tweet}")
-            return f"✅ ツイート完了:\n{tweet}"
-        except Exception as e:
-            print(f"❌ 投稿失敗: {e}")
-            return str(e), 500
+    if not PROMPT:
+        return "❌ PROMPT_TEXT の環境変数が設定されていません。", 500
+    try:
+# Gemini で文章生成
+        response = model.generate_content(PROMPT)
+        result = response.text.strip()
+        tweet = f"{result}\n{HASHTAGS.strip()}"
+# X (v2) に投稿
+        client.create_tweet(text=tweet)
+        print(f"✅ 投稿成功:\n{tweet}")
+        return f"✅ ツイート完了:\n{tweet}"
+    except Exception as e:
+        print(f"❌ 投稿失敗: {e}")
+        return str(e), 500
 
 # --- Xポスト規制内容表示　---
 @app.route("/ratelimit", methods=["GET"])
 def check_rate_limit():
-        try:
-            url = "https://api.twitter.com/2/tweets?ids=20"
-            auth = client.session.auth
-            res = requests.get(url, auth=auth)
-            limit = res.headers.get("x-rate-limit-limit", "N/A")
-            remaining = res.headers.get("x-rate-limit-remaining", "N/A")
-            reset = res.headers.get("x-rate-limit-reset", "N/A")
-            return f"""✅ Rate Limit Info:
-    - limit: {limit}
-    - remaining: {remaining}
-    - reset: {reset} (Unix time)
-    """, 200
-        except Exception as e:
-            return f"❌ レート情報の取得に失敗しました: {e}", 500
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    try:
+        url = "https://api.twitter.com/2/tweets?ids=20"
+        auth = client.session.auth
+        res = requests.get(url, auth=auth)
+        limit = res.headers.get("x-rate-limit-limit", "N/A")
+        remaining = res.headers.get("x-rate-limit-remaining", "N/A")
+        reset = res.headers.get("x-rate-limit-reset", "N/A")
+        return f"""✅ Rate Limit Info:
+- limit: {limit}
+- remaining: {remaining}
+- reset: {reset} (Unix time)
+""", 200
+    except Exception as e:
+        return f"❌ レート情報の取得に失敗しました: {e}", 500
 
 # Flask をバックグラウンドで起動
-threading.Thread(target=run_flask, daemon=True).start()
+threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000))), daemon=True).start()
 
 
 # # # # # # # # # # # # # # # # # # # # # # # # # 
@@ -184,27 +167,27 @@ threading.Thread(target=run_flask, daemon=True).start()
 
 # --- Discord Bot 設定 ---
 
-    #スラッシュコマンド：モンスター取得関数 ---
-    def fetch_monsters():
-        url = "https://gamewith.jp/mhwilds/452222"
-        res = requests.get(url)
-        soup = BeautifulSoup(res.content, "html.parser")
-        return [li.get("data-name", "").strip() for li in soup.select("ol.monster_weak_list li[data-name]") if li.get("data-name")]
+#スラッシュコマンド：モンスター取得関数 ---
+def fetch_monsters():
+    url = "https://gamewith.jp/mhwilds/452222"
+    res = requests.get(url)
+    soup = BeautifulSoup(res.content, "html.parser")
+    return [li.get("data-name", "").strip() for li in soup.select("ol.monster_weak_list li[data-name]") if li.get("data-name")]
 
-    MONSTERS = fetch_monsters()
+MONSTERS = fetch_monsters()
 
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} でログインしました！")
 
 #スラッシュコマンド：モンスターランダム排出　---
-    @bot.slash_command(name="モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
-    async def monster(ctx):
-        if MONSTERS:
-            name = random.choice(MONSTERS)
-            await ctx.respond(f"あなたのモンスターは… 🐲 **{name}** だ！")
-        else:
-            await ctx.respond("モンスターが見つからなかったよ😢")
+@bot.slash_command(name="モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
+async def monster(ctx):
+    if MONSTERS:
+        name = random.choice(MONSTERS)
+        await ctx.respond(f"あなたのモンスターは… 🐲 **{name}** だ！")
+    else:
+        await ctx.respond("モンスターが見つからなかったよ😢")
 
 #スラッシュコマンド：モンスターリスト更新設定　---
 @bot.slash_command(name="モンスターリスト更新", description="モンスターリストを更新するよ")
@@ -257,7 +240,7 @@ EVENT_URL = "https://gamewith.jp/mhwilds/484117"
 def fetch_events():
     res = requests.get(EVENT_URL)
     soup = BeautifulSoup(res.content, "html.parser")
-    items = soup.find_all("div", class_="_item")  # ← div に変更
+    items = soup.find_all("div", class_="_item")
 
     current_events = []
     upcoming_events = []
@@ -282,7 +265,7 @@ def fetch_events():
         if not info:
             continue
 
-        # ラベルと値を順に取得（HTML構造に基づいて）
+# ラベルと値を順に取得（HTML構造に基づいて）
         labels = info.find_all("div", class_="_label-9")
         all_divs = info.find_all("div")
         values = []
@@ -292,7 +275,7 @@ def fetch_events():
                 skip_next = False
                 continue
             if div in labels:
-                # 次のdivが値
+# 次のdivが値
                 if i + 1 < len(all_divs):
                     values.append(all_divs[i + 1])
                     skip_next = True
@@ -309,8 +292,6 @@ def fetch_events():
             upcoming_events.append(event_info)
 
     return current_events, upcoming_events
-
-
 
 # スラッシュコマンド：開催中イベント
 @bot.slash_command(name="イベント--開催中--", description="現在開催中のイベント一覧を表示します")
@@ -329,7 +310,6 @@ async def current(ctx):
             f"📝 {e.get('条件', '')}\n"
             f"🔗 <{e.get('URL', '')}>"
         )
-
         await ctx.respond(msg)
 
 # スラッシュコマンド：開催予定イベント
@@ -351,7 +331,7 @@ async def upcoming(ctx):
             f"🔗 <{e.get('URL', '')}>"
         )
 
-        await ctx.respond(msg)  
+        await ctx.respond(msg)
 
 ###Bot Run###
 bot.run(TOKEN)
