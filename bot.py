@@ -153,10 +153,6 @@ def fetch_monsters():
 
 MONSTERS = fetch_monsters()
 
-@bot.event
-async def on_ready():
-    print(f"✅ {bot.user} でログインしました！")
-
 @bot.slash_command(name="モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
 async def monster(ctx):
     if MONSTERS:
@@ -275,6 +271,12 @@ async def upcoming(ctx):
             f"🔗 <{e.get('URL', '')}>"
         )
         await ctx.respond(msg)
+
+# --- スラッシュコマンドはここより上へ！ ---
+@bot.event
+async def on_ready():
+    print(f"✅ {bot.user} でログインしました！")
+    await bot.sync_commands()  # ← これを入れる！
 
 # --- 起動処理 ---
 if __name__ == "__main__":
