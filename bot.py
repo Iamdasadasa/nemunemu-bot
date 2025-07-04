@@ -46,9 +46,16 @@ HASHTAGS = """
 #モンスターハンターワイルズ
 #モンハンワイルズ募集
 """
+
+# リアクション対象メッセージを記録する辞書
+guide_messages = {}  # {user_id: message_id}
+
+# ロールID（設定済みかもだけど確認）
+ROLE_FIRST_TIMER = 1390261208782868590  # 初めてロール
+ROLE_GENERAL = 1390261772853837907      # 一般ロール ←適切なIDに変えて
+
 WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")
 REPRESENTATIVE_COUNCIL_CHANNEL_ID = 1388357389886951616
-ROLE_ID = 1390261208782868590
 GUIDE_CHANNEL_ID = 1389290096498315364
 
 # --- Flaskエンドポイント ---
@@ -99,7 +106,7 @@ threading.Thread(target=run_flask, daemon=True).start()
 @bot.event
 async def on_member_join(member):
     guild = member.guild
-    role = guild.get_role(ROLE_ID)
+    role = guild.get_role(ROLE_FIRST_TIMER)
     log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
     guide_channel = guild.get_channel(GUIDE_CHANNEL_ID)
 
@@ -126,7 +133,7 @@ async def on_member_join(member):
                 await log_channel.send(f"❌ ロール付与エラー: {e}")
     else:
         if log_channel:
-            await log_channel.send(f"⚠️ ID {ROLE_ID} のロールが見つかりません。")
+            await log_channel.send(f"⚠️ ID {ROLE_FIRST_TIMER} のロールが見つかりません。")
 
     if guide_channel:
         try:
@@ -141,10 +148,50 @@ async def on_member_join(member):
                 "⚠️万が一リアクションを行なってもメンバー権限が付与されない場合はこのチャンネルにメッセージを送信してください。⚠️\n"
                 "不明点があればお気軽にお尋ねください！"
             )
-            await guide_channel.send(guide_msg)
+            sent_msg = await guide_channel.send(guide_msg)
+            guide_messages[member.id] = sent_msg.id
+            await sent_msg.add_reaction("✅")  # リアクション要求（任意の絵文字でOK）
+            
         except Exception as e:
             if log_channel:
                 await log_channel.send(f"⚠️ 案内メッセージ送信に失敗しました: {e}")
+
+# --- リアクションで権限付与の処理 ---
+@bot.event
+async def on_raw_reaction_add(payload):
+    if payload.user_id == bot.user.id:
+        return  # Bot自身のリアクションは無視
+
+    user_id = payload.user_id
+    message_id = payload.message_id
+
+    if user_id not in guide_messages:
+        return  # 対象メッセージでない
+
+    if guide_messages[user_id] != message_id:
+        return  # 自分の案内メッセージじゃない
+
+    guild = bot.get_guild(payload.guild_id)
+    member = guild.get_member(user_id)
+    if not member:
+        return
+
+    role_first = guild.get_role(ROLE_FIRST_TIMER)
+    role_general = guild.get_role(ROLE_GENERAL)
+    channel = bot.get_channel(payload.channel_id)
+
+    try:
+        if role_first in member.roles:
+            await member.remove_roles(role_first)
+        if role_general:
+            await member.add_roles(role_general)
+        msg = await channel.fetch_message(message_id)
+        await msg.delete()
+        del guide_messages[user_id]
+    except Exception as e:
+        log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(f"⚠️ リアクションによるロール変更エラー: {e}")
 
 # --- モンスター関連コマンド ---
 def fetch_monsters():
