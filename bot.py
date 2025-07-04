@@ -10,6 +10,7 @@ from discord import option
 import google.generativeai as genai
 import tweepy
 import asyncio
+import time
 
 # --- Discord共通設定 ---
 intents = discord.Intents.default()
