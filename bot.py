@@ -272,16 +272,20 @@ async def upcoming(ctx):
         )
         await ctx.respond(msg)
 
+print(f"TOKEN is {'set' if TOKEN else 'NOT set'}")
+
 # --- スラッシュコマンドはここより上へ！ ---
 @bot.event
 async def on_ready():
-    print("✅ on_ready() に入りました！")
-    print(f"✅ ログインユーザー: {bot.user} (ID: {bot.user.id})")
     try:
+        print("✅ on_ready() に入りました！")
+        print(f"✅ ログインユーザー: {bot.user} (ID: {bot.user.id})")
         await bot.sync_commands()
         print("✅ スラッシュコマンドの同期に成功しました")
     except Exception as e:
-        print(f"❌ スラッシュコマンド同期中にエラー: {e}")
+        import traceback
+        print(f"❌ on_ready() 内でエラー発生: {e}")
+        traceback.print_exc()
 
 # --- 起動処理 ---
 if __name__ == "__main__":
