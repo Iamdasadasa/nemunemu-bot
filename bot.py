@@ -275,8 +275,13 @@ async def upcoming(ctx):
 # --- スラッシュコマンドはここより上へ！ ---
 @bot.event
 async def on_ready():
-    print(f"✅ {bot.user} でログインしました！")
-    await bot.sync_commands()  # ← これを入れる！
+    print("✅ on_ready() に入りました！")
+    print(f"✅ ログインユーザー: {bot.user} (ID: {bot.user.id})")
+    try:
+        await bot.sync_commands()
+        print("✅ スラッシュコマンドの同期に成功しました")
+    except Exception as e:
+        print(f"❌ スラッシュコマンド同期中にエラー: {e}")
 
 # --- 起動処理 ---
 if __name__ == "__main__":
