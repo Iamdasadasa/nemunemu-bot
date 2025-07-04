@@ -20,6 +20,8 @@ intents.reactions = True
 bot = discord.Bot(intents=intents)
 TOKEN = os.getenv("TOKEN")
 
+print(f"TOKEN is {'set' if TOKEN else 'NOT set'}")
+
 # --- Flaskアプリ ---
 app = Flask(__name__)
 
