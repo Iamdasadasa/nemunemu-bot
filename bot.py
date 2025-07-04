@@ -277,11 +277,13 @@ async def upcoming(ctx):
 
 # --- 起動処理 ---
 if __name__ == "__main__":
-    try:
-        bot.run(TOKEN)
-    except discord.HTTPException as e:
-        if "429" in str(e) or "Too Many Requests" in str(e):
-            print("❌ 429 Too Many Requests 発生。自動でプロセスを停止します")
-            os.system("kill 1")
-        else:
-            raise
+    while True:
+        try:
+            bot.run(TOKEN)
+            break  # 正常終了したらループ抜ける（必要に応じて）
+        except discord.HTTPException as e:
+            if "429" in str(e) or "Too Many Requests" in str(e):
+                print("❌ 429 Too Many Requests 発生。1時間停止して再試行します…")
+                time.sleep(3600)  # 3600秒 = 1時間
+            else:
+                raise
