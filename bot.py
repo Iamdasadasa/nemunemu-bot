@@ -114,7 +114,7 @@ async def on_member_join(member):
         username = member.display_name
         await log_channel.send(
             f"管理メンバーの皆さま、お手数ですが新たに\n【 {username} 】\nさんがサーバーに参加されました。\n"
-            "もしお時間のある際にログインされることがありましたら、サークルの承認対応をしていただけますと幸いです。\nよろしくお願いいたします。"
+            "よろしくお願いいたします。"
         )
 
     if role:
