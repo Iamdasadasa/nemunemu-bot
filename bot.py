@@ -55,7 +55,7 @@ ROLE_FIRST_TIMER = 1390261208782868590  # 初めてロール
 ROLE_GENERAL = 1390261772853837907      # 一般ロール ←適切なIDに変えて
 
 WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")
-REPRESENTATIVE_COUNCIL_CHANNEL_ID = 1388357389886951616
+REPRESENTATIVE_COUNCIL_CHANNEL_ID = os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID")#1388357389886951616
 GUIDE_CHANNEL_ID = 1389290096498315364
 
 # --- Flaskエンドポイント ---
@@ -151,7 +151,7 @@ async def on_member_join(member):
             sent_msg = await guide_channel.send(guide_msg)
             guide_messages[member.id] = sent_msg.id
             await sent_msg.add_reaction("✅")  # リアクション要求（任意の絵文字でOK）
-            
+
         except Exception as e:
             if log_channel:
                 await log_channel.send(f"⚠️ 案内メッセージ送信に失敗しました: {e}")
