@@ -327,8 +327,8 @@ async def quest_post(
     ctx,
     時間: str,
     テンプレ内容: discord.Option(str, choices=["バウンティ消化", "MR素材集め", "傀異討究", "金策", "自由"]),
-    カスタム内容: str = "",
     場所: discord.Option(discord.VoiceChannel, description="VCチャンネルを選択"),
+    カスタム内容: str = "",
     人数: str = "",
     一言: str = ""
 ):
