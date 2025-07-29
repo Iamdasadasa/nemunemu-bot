@@ -326,13 +326,25 @@ async def upcoming(ctx):
 async def quest_post(
     ctx,
     時間: str,
-    募集テンプレ内容: discord.Option(str, choices=["バウンティ消化", "クエストお手伝い","HR上げ", "素材集め", "金策", "写真撮りたい", "募集カスタムに記載"]),
+募集テンプレ内容: discord.Option(
+    str,
+    description="よくある募集内容から選んでね（空欄にして募集カスタムに記載（上書き）してもOK",
+    choices=[
+        "バウンティ消化",
+        "クエストお手伝い",
+        "HR上げ",
+        "素材集め",
+        "金策",
+        "写真撮りたい！",
+        "募集カスタムに記載"
+    ]
+),
     場所: discord.Option(discord.VoiceChannel, description="VCチャンネルを選択"),
     募集カスタム内容: str = "",
     人数: str = "",
     一言: str = ""
 ):
-    内容 = カスタム内容 if カスタム内容 else テンプレ内容
+    内容 = カスタム内容 if カスタム内容 else 募集テンプレ内容
 
     embed = discord.Embed(title="🎯 クエスト募集のお知らせ", color=0x4CAF50)
     embed.add_field(name="⏰ 時間", value=f"→ {時間}", inline=False)
