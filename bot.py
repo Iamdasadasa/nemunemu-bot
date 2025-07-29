@@ -347,10 +347,10 @@ async def quest_post(
     内容 = 募集カスタム内容 if 募集カスタム内容 else 募集テンプレ内容
 
     embed = discord.Embed(title="🎯 クエスト募集のお知らせ", color=0x4CAF50)
-    embed.add_field(name="⏰ 時間", value=f"→ {時間}", inline=False)
-    embed.add_field(name="📝 内容", value=f"→ {内容}", inline=False)
-    embed.add_field(name="📍 場所", value=f"→ {場所.name}", inline=False)
-    embed.add_field(name="👥 人数", value=f"→ {人数}", inline=False)
+    embed.add_field(name="⏰ 時間", value=f"\n→ __{時間}__", inline=False)
+    embed.add_field(name="📝 内容", value=f"\n→ __{内容}__", inline=False)
+    embed.add_field(name="📍 場所", value=f"\n→ __{場所.name}__", inline=False)
+    embed.add_field(name="👥 人数", value=f"\n→ __{人数}__", inline=False)
     if 一言:
         embed.add_field(name="💬 一言", value=f"→ {一言}", inline=False)
 
