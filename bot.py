@@ -321,6 +321,29 @@ async def upcoming(ctx):
         )
         await ctx.respond(msg)
 
+# --- クエスト募集スラッシュコマンド ---
+@bot.slash_command(name="狩り募集⚔️", description="クエスト募集メッセージを投稿します")
+async def quest_post(
+    ctx,
+    時間: str,
+    テンプレ内容: discord.Option(str, choices=["バウンティ消化", "MR素材集め", "傀異討究", "金策", "自由"]),
+    カスタム内容: str = "",
+    場所: discord.Option(discord.VoiceChannel, description="VCチャンネルを選択"),
+    人数: str = "",
+    一言: str = ""
+):
+    内容 = カスタム内容 if カスタム内容 else テンプレ内容
+
+    embed = discord.Embed(title="🎯 クエスト募集のお知らせ", color=0x4CAF50)
+    embed.add_field(name="🕒 時間", value=時間, inline=False)
+    embed.add_field(name="📝 内容", value=内容, inline=False)
+    embed.add_field(name="📍 場所", value=場所.name, inline=False)
+    embed.add_field(name="👥 人数", value=人数, inline=False)
+    if 一言:
+        embed.add_field(name="💬 一言", value=一言, inline=False)
+
+    await ctx.respond("@everyone", embed=embed)
+
 # --- スラッシュコマンドはここより上へ！ ---
 @bot.event
 async def on_ready():
