@@ -354,7 +354,14 @@ async def quest_post(
     if 一言:
         embed.add_field(name="💬 一言", value=f"→ {一言}", inline=False)
 
-    await ctx.respond(embed=embed)
+    response = await ctx.respond(embed=embed)
+    original = await response.original_response()
+
+    # スレッドを作成（メッセージを親にする）
+    await original.create_thread(
+        name=f"{ctx.author.display_name}の募集スレッド",
+        auto_archive_duration=60  # 1時間後に自動アーカイブ（15, 60, 1440, 4320 から選べる）
+    )
 
 # --- スラッシュコマンドはここより上へ！ ---
 @bot.event
