@@ -322,7 +322,7 @@ async def upcoming(ctx):
         await ctx.respond(msg)
 
 # --- クエスト募集スラッシュコマンド ---
-@bot.slash_command(name="狩り募集⚔️", description="クエスト募集メッセージを投稿します")
+@bot.slash_command(name="狩り募集", description="クエスト募集メッセージを投稿します")
 async def quest_post(
     ctx,
     時間: str,
