@@ -325,26 +325,26 @@ async def upcoming(ctx):
 @bot.slash_command(name="狩り募集", description="クエスト募集メッセージを投稿します")
 async def quest_post(
     ctx,
-    時間: str,
-募集テンプレ内容: discord.Option(
-    str,
-    description="よくある募集内容から選んでね（空欄にして募集カスタムに記載（上書き）してもOK",
-    choices=[
-        "バウンティ消化",
-        "クエストお手伝い",
-        "HR上げ",
-        "素材集め",
-        "金策",
-        "写真撮りたい！",
-        "募集カスタムに記載"
-    ]
-),
+    時間: discord.Option(str, description="集合・出発時間を入力（例: 21時～）"),
+    募集テンプレ内容: discord.Option(
+        str,
+        description="よくある募集内容から選んでね（カスタム内容があればそちらが優先されます）",
+        choices=[
+            "バウンティ消化",
+            "クエストお手伝い",
+            "HR上げ",
+            "素材集め",
+            "金策",
+            "写真撮りたい！",
+            "募集カスタムに記載"
+        ]
+    ),
     場所: discord.Option(discord.VoiceChannel, description="VCチャンネルを選択"),
-    募集カスタム内容: str = "",
-    人数: str = "",
-    一言: str = ""
+    人数: discord.Option(str, description="募集人数や表現を自由に記載（例: 4人, 5名）"),
+    募集カスタム内容: discord.Option(str, description="自由入力で内容を上書きしたい場合はこちら", default=""),
+    一言: discord.Option(str, description="補足コメントなど（任意）", default="")
 ):
-    内容 = カスタム内容 if カスタム内容 else 募集テンプレ内容
+    内容 = 募集カスタム内容 if 募集カスタム内容 else 募集テンプレ内容
 
     embed = discord.Embed(title="🎯 クエスト募集のお知らせ", color=0x4CAF50)
     embed.add_field(name="⏰ 時間", value=f"→ {時間}", inline=False)
@@ -354,7 +354,7 @@ async def quest_post(
     if 一言:
         embed.add_field(name="💬 一言", value=f"→ {一言}", inline=False)
 
-    await ctx.respond("@everyone", embed=embed)
+    await ctx.respond(embed=embed)
 
 # --- スラッシュコマンドはここより上へ！ ---
 @bot.event
