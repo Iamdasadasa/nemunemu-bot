@@ -111,9 +111,9 @@ async def on_member_join(member):
     guide_channel = guild.get_channel(GUIDE_CHANNEL_ID)
 
     if log_channel:
-        username = member.display_name
+        mention_link = f"<@{member.id}>"  # メンションリンク（通知なし）
         await log_channel.send(
-            f"管理メンバーの皆さま、お手数ですが新たに\n【 {username} 】\nさんがサーバーに参加されました。\n"
+            f"管理メンバーの皆さま、お手数ですが新たに\n\\{mention_link}\nさんがサーバーに参加されました。\n"
             "よろしくお願いいたします。"
         )
 
@@ -346,7 +346,7 @@ async def quest_post(
 ):
     内容 = 募集カスタム内容 if 募集カスタム内容 else 募集テンプレ内容
 
-    embed = discord.Embed(title=f"🎯 クエスト募集のお知らせ（by {ctx.author.display_name}）", color=0x4CAF50)
+    embed = discord.Embed(title=f"🎯 クエスト募集のお知らせ（by {ctx.author.mention}）", color=0x4CAF50)
     embed.add_field(name="⏰ 時間", value=f"\n→ __{時間}__", inline=False)
     embed.add_field(name="📝 内容", value=f"\n→ __{内容}__", inline=False)
     embed.add_field(name="📍 場所", value=f"\n→ __{場所.name}__", inline=False)
@@ -359,7 +359,7 @@ async def quest_post(
 
     # スレッドを作成（メッセージを親にする）
     await original.create_thread(
-        name=f"{ctx.author.display_name}の募集スレッド",
+        name=f"{ctx.author.name}の募集スレッド",
         auto_archive_duration=60  # 1時間後に自動アーカイブ（15, 60, 1440, 4320 から選べる）
     )
 
