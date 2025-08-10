@@ -416,6 +416,74 @@ async def upcoming(ctx):
         )
         await ctx.respond(msg)
 
+# 変更点サマリ
+# 1) 環境変数 AREA_LIST を新設し、エリア一覧を読み込む処理を追加
+# 2) /エリア抽選 と /エリアリロード（管理者専用・不可視）を追加
+# 3) 既存の _parse_env_list を流用
+
+# --- 追加: 環境変数読み込み（武器の直下あたりに配置） ---
+AREA_LIST_RAW = os.getenv("AREA_LIST", "")
+AREAS = _parse_env_list(AREA_LIST_RAW)  # 既定は設けず、未設定ならエラー表示
+
+# --- 追加: エリア抽選コマンド ---
+@bot.slash_command(name="エリア抽選", description="Renderの環境変数のエリア一覧からランダムに選びます")
+async def area_draw(
+    ctx,
+    数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
+    重複許可: discord.Option(bool, description="同じエリアが複数回出てもよい", required=False, default=False)
+):
+    if not AREAS:
+        await ctx.respond(
+            "❌ エリア一覧が空です。Renderの環境変数 `AREA_LIST` にエリア名をカンマまたは改行で設定してください。\n"
+            "例: 草原, 砂漠, 雪山\n再デプロイ後にお試しください。",
+            ephemeral=True
+        )
+        return
+
+    if 数 < 1:
+        await ctx.respond("抽選個数は1以上にしてね❌", ephemeral=True)
+        return
+
+    if 重複許可:
+        picks = [random.choice(AREAS) for _ in range(数)]
+    else:
+        if 数 > len(AREAS):
+            await ctx.respond(f"重複なしでは最大 {len(AREAS)} 個までです❌", ephemeral=True)
+            return
+        picks = random.sample(AREAS, k=数)
+
+    if len(picks) == 1:
+        await ctx.respond(f"🗺️ 本日のエリアは… **{picks[0]}**！")
+    else:
+        lines = "\n".join([f"- {a}" for a in picks])
+        await ctx.respond(f"🗺️ 抽選結果 ({数}件)\n{lines}")
+
+# --- 追加: エリアリロード（管理者のみ・可視性制限・DM不可） ---
+@bot.slash_command(
+    name="エリアリロード",
+    description="エリア一覧を再読み込みします（管理者専用）",
+    default_member_permissions=discord.Permissions(administrator=True),
+    dm_permission=False
+)
+async def area_reload(ctx):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
+        return
+
+    global AREAS
+    new_raw = os.getenv("AREA_LIST", "")
+    new_list = _parse_env_list(new_raw)
+    AREAS = new_list  # 既定は無し（未設定なら空のまま）
+
+    await ctx.respond(
+        "🔄 エリア一覧を再読み込みしました。\n"
+        f"現在の登録数: {len(AREAS)} 件\n"
+        "※ Renderでは環境変数の変更は通常、再デプロイ後に反映されます。",
+        ephemeral=True
+    )
+
+
+
 # --- クエスト募集スラッシュコマンド ---
 @bot.slash_command(name="狩り募集", description="クエスト募集メッセージを投稿します")
 async def quest_post(
