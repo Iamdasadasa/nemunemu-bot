@@ -111,10 +111,10 @@ async def on_member_join(member):
     guide_channel = guild.get_channel(GUIDE_CHANNEL_ID)
 
     if log_channel:
-        mention_link = f"<@{member.id}>"  # メンションリンク（通知なし）
         await log_channel.send(
-            f"管理メンバーの皆さま、お手数ですが新たに\n\\{mention_link}\nさんがサーバーに参加されました。\n"
-            "よろしくお願いいたします。"
+            f"管理メンバーの皆さま、お手数ですが新たに\n{member.mention}\nさんがサーバーに参加されました。\n"
+            "よろしくお願いいたします。",
+            allowed_mentions=discord.AllowedMentions.none()
         )
 
     if role:
