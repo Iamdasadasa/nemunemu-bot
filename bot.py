@@ -38,6 +38,7 @@ client = tweepy.Client(
 )
 
 # --- 環境変数系 ---
+
 HASHTAGS = """
 #モンハンワイルズ
 #モンハン
@@ -46,6 +47,40 @@ HASHTAGS = """
 #モンスターハンターワイルズ
 #モンハンワイルズ募集
 """
+
+# 武器一覧（Render の環境変数 WEAPON_LIST に格納：カンマ or 改行区切り）
+WEAPON_LIST_RAW = os.getenv("WEAPON_LIST", "")
+
+def _parse_env_list(raw: str):
+    # カンマ/改行/セミコロン区切りに対応
+    if not raw:
+        return []
+    parts = []
+    for sep in ["\n", ",", ";"]:
+        if sep in raw:
+            for p in raw.split(sep):
+                parts.append(p.strip())
+            raw = "\n".join(parts)  # 次の周回のために一旦結合（重複除去は後で）
+            parts = []
+    # 最後の結合結果から空白行を除去
+    items = [s.strip() for s in raw.replace(";", "\n").replace(",", "\n").split("\n")]
+    # 空要素除去 & 重複排除（順序保持）
+    seen = set()
+    result = []
+    for s in items:
+        if s and s not in seen:
+            seen.add(s)
+            result.append(s)
+    return result
+
+# 既定（環境変数が未設定の場合のフォールバック）
+_DEFAULT_WEAPONS = [
+    "大剣", "太刀", "片手剣", "双剣", "ハンマー", "狩猟笛",
+    "ランス", "ガンランス", "スラッシュアックス", "チャージアックス",
+    "操虫棍", "ライトボウガン", "ヘビィボウガン", "弓"
+]
+
+WEAPONS = _parse_env_list(WEAPON_LIST_RAW) or _DEFAULT_WEAPONS
 
 # リアクション対象メッセージを記録する辞書
 guide_messages = {}  # {user_id: message_id}
@@ -105,7 +140,7 @@ threading.Thread(target=run_flask, daemon=True).start()
 # --- 新規メンバー時の処理 ---
 @bot.event
 async def on_member_join(member):
-    guild = member.guild
+    guild = member.guild    
     role = guild.get_role(ROLE_FIRST_TIMER)
     log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
     guide_channel = guild.get_channel(GUIDE_CHANNEL_ID)
@@ -210,12 +245,72 @@ async def monster(ctx):
     else:
         await ctx.respond("モンスターが見つからなかったよ😢")
 
+
 @bot.slash_command(name="モンスターリスト更新", description="モンスターリストを更新するよ")
 async def update_monsters(ctx):
     await ctx.respond("🔄 モンスターリストを更新中…")
     global MONSTERS
     MONSTERS = fetch_monsters()
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
+
+
+# --- 武器抽選コマンド（環境変数ベース） ---
+@bot.slash_command(name="武器抽選", description="武器一覧からランダムに選びます")
+async def weapon_draw(
+    ctx,
+    数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
+    重複許可: discord.Option(bool, description="同じ武器が複数回出てもよい", required=False, default=False)
+):
+    if not WEAPONS:
+        await ctx.respond(
+            "❌ 武器一覧が空です。Renderの環境変数 `WEAPON_LIST` に武器名をカンマまたは改行で設定してください。\n"
+            "例: 大剣, 太刀, 片手剣\n再デプロイ後にお試しください。",
+            ephemeral=True
+        )
+        return
+
+    if 数 < 1:
+        await ctx.respond("抽選個数は1以上にしてね❌", ephemeral=True)
+        return
+
+    if 重複許可:
+        picks = [random.choice(WEAPONS) for _ in range(数)]
+    else:
+        if 数 > len(WEAPONS):
+            await ctx.respond(f"重複なしでは最大 {len(WEAPONS)} 個までです❌", ephemeral=True)
+            return
+        picks = random.sample(WEAPONS, k=数)
+
+    if len(picks) == 1:
+        await ctx.respond(f"🎲 本日の武器は… **{picks[0]}**！")
+    else:
+        lines = "\n".join([f"- {w}" for w in picks])
+        await ctx.respond(f"🎲 抽選結果 ({数}件)\n{lines}")
+
+
+@bot.slash_command(
+    name="武器リロード",
+    description="武器一覧を再読み込みします（管理者専用）",
+    default_member_permissions=discord.Permissions(administrator=True),
+    dm_permission=False
+)
+async def weapon_reload(ctx):
+    # パーミッションチェック（管理者のみ）
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
+        return
+
+    global WEAPONS
+    new_raw = os.getenv("WEAPON_LIST", "")
+    new_list = _parse_env_list(new_raw)
+    WEAPONS = new_list or _DEFAULT_WEAPONS
+    # Render の環境変数変更は再デプロイ後に反映される点も案内
+    await ctx.respond(
+        "🔄 武器一覧を再読み込みしました。\n"
+        f"現在の登録数: {len(WEAPONS)} 件\n"
+        "※ Renderでは環境変数の変更は通常、再デプロイ後に反映されます。",
+        ephemeral=True
+    )
 
 @bot.slash_command(name="メンバー分け", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
