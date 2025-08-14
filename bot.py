@@ -456,7 +456,7 @@ async def area_draw(
         await ctx.respond(f"🗺️ 本日のエリアは… **{picks[0]}**！")
     else:
         lines = "\n".join([f"- {a}" for a in picks])
-        await ctx.respond(f"🗺️ 抽選結果 ({数}件)\n{lines}")
+        await ctx.respond(f"🗺️ 抽選結果は ({数}件)\n{lines}")
 
 # --- 追加: エリアリロード（管理者のみ・可視性制限・DM不可） ---
 @bot.slash_command(
