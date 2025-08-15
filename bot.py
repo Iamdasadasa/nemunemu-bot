@@ -41,9 +41,10 @@ intents.reactions = True
 bot = discord.Bot(intents=intents)
 
 # --- トークン取得: TOKEN のみ ---
-TOKEN = os.getenv("TOKEN")
+TOKEN = (os.getenv("TOKEN") or "").strip()
 if not TOKEN or len(TOKEN) < 50:
     sys.exit("ENV TOKEN が未設定か不正です。RenderのEnvironmentで TOKEN に **生トークン**（先頭に 'Bot ' を付けない）を設定してください。")
+print(f"[DEBUG] Loaded TOKEN length={len(TOKEN)} preview={TOKEN[:4]}...{TOKEN[-4:] if len(TOKEN) >= 8 else ''}")
 
 # --- Flaskアプリ ---
 app = Flask(__name__)
