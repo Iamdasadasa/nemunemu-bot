@@ -14,6 +14,7 @@ import time
 import sys
 
 import logging
+import base64
 
 # discord.py/py-cord のバージョン差異に対応したロギング設定
 try:
@@ -45,6 +46,25 @@ TOKEN = (os.getenv("TOKEN") or "").strip()
 if not TOKEN or len(TOKEN) < 50:
     sys.exit("ENV TOKEN が未設定か不正です。RenderのEnvironmentで TOKEN に **生トークン**（先頭に 'Bot ' を付けない）を設定してください。")
 print(f"[DEBUG] Loaded TOKEN length={len(TOKEN)} preview={TOKEN[:4]}...{TOKEN[-4:] if len(TOKEN) >= 8 else ''}")
+
+# 追加: トークンの安全なダンプ（不可視文字とBot IDの検証用）
+def _debug_token_snapshot(tok: str):
+    # reprで改行/制御文字の混入を可視化（全体は出さない）
+    print(f"[DEBUG] TOKEN repr={tok!r}")
+    hidden = [c for c in tok if ord(c) < 32 or ord(c) == 127]
+    if hidden:
+        hexes = ' '.join(f"{ord(c):02x}" for c in hidden)
+        print(f"[DEBUG] TOKEN contains control chars (hex): {hexes}")
+    # 先頭パートをBase64デコードしてBot IDを確認
+    try:
+        head = tok.split(".")[0]
+        pad = "=" * (-len(head) % 4)
+        decoded = base64.urlsafe_b64decode((head + pad).encode()).decode(errors="replace")
+        print(f"[DEBUG] Decoded Bot ID from token head: {decoded}")
+    except Exception as e:
+        print(f"[DEBUG] Token head decode error: {e}")
+
+_debug_token_snapshot(TOKEN)
 
 # --- Flaskアプリ ---
 app = Flask(__name__)
@@ -616,7 +636,7 @@ async def on_ready():
         print(f"❌ on_ready() 内でエラー発生: {e}")
         traceback.print_exc()
 
-# --- 起動前プリフライト: RESTでトークン有効性を確認（429/5xxは非致命） ---
+# --- 起動前プリフライト: RESTでトークン有効性を確認（詳細ログ付き） ---
 def preflight_check(token: str) -> bool:
     try:
         r = requests.get(
@@ -627,13 +647,18 @@ def preflight_check(token: str) -> bool:
             },
             timeout=10,
         )
-        head = (r.text or "")[:120]
-        print(f"[PREFLIGHT] status={r.status_code} body_head={head!r}")
+        # ヘッダと本文の頭だけ出す（Retry-Afterの有無も確認）
+        retry_after = r.headers.get("Retry-After") or r.headers.get("retry-after")
+        date_hdr = r.headers.get("Date")
+        cf_hdr = r.headers.get("CF-RAY") or r.headers.get("CF-Ray")
+        print(f"[PREFLIGHT] status={r.status_code} retry_after={retry_after} date={date_hdr} cf={cf_hdr}")
+        body_head = (r.text or "")[:120]
+        print(f"[PREFLIGHT] body_head={body_head!r}")
         if r.status_code == 200:
             return True  # トークンOK
         if r.status_code == 401:
             return False  # 本当に無効
-        # 429/403/5xx などは非致命として続行
+        # 429/403/5xx などは非致命として続行（本番での連続再デプロイ地獄を避ける）
         print(f"[PREFLIGHT] non-fatal status {r.status_code} → 続行して bot.run() へ")
         return True
     except Exception as e:
@@ -653,14 +678,19 @@ if __name__ == "__main__":
             break
         except discord.errors.LoginFailure as e:
             # トークン不正/欠落
-            print(f"❌ LoginFailure: {e}\nトークンが不正の可能性があります。Dev Portalで Reset Token → Render の TOKEN を更新してください（生トークン）。")
+            print(f"❌ LoginFailure: {e}\nトークンが不正の可能性があります。Dev PortalでReset Token→RenderのDISCORD_TOKENを更新してください。")
             raise
         except discord.HTTPException as e:
             if "429" in str(e) or "Too Many Requests" in str(e):
                 print("❌ 429 Too Many Requests 発生。1時間停止して再試行します…")
                 time.sleep(3600)
             else:
-                print(f"❌ HTTPException: {e}")
+                ra = None
+                try:
+                    ra = getattr(getattr(e, "response", None), "headers", {}).get("Retry-After")
+                except Exception:
+                    pass
+                print(f"❌ HTTPException: {e} retry_after={ra}")
                 raise
         except Exception as e:
             print(f"❌ 予期せぬ例外: {e}")
