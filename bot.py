@@ -47,8 +47,6 @@ if not TOKEN or len(TOKEN) < 50:
     sys.exit("ENV TOKEN が未設定か不正です。RenderのEnvironmentで TOKEN に **生トークン**（先頭に 'Bot ' を付けない）を設定してください。")
 print(f"[DEBUG] Loaded TOKEN length={len(TOKEN)} preview={TOKEN[:4]}...{TOKEN[-4:] if len(TOKEN) >= 8 else ''}")
 
-# Optional GUILD_ID for slash command sync
-GUILD_ID = os.getenv("GUILD_ID")
 
 # 追加: トークンの安全なダンプ（不可視文字とBot IDの検証用）
 def _debug_token_snapshot(tok: str):
@@ -631,13 +629,8 @@ async def on_ready():
     try:
         print("✅ on_ready() に入りました！")
         print(f"✅ ログインユーザー: {bot.user} (ID: {bot.user.id})")
-        if GUILD_ID:
-            guild = discord.Object(id=int(GUILD_ID))
-            await bot.tree.sync(guild=guild)
-            print(f"✅ スラッシュコマンドの同期に成功しました (guild限定: {GUILD_ID})")
-        else:
-            await bot.tree.sync()
-            print("✅ スラッシュコマンドの同期に成功しました (グローバル)")
+        await bot.tree.sync()
+        print("✅ スラッシュコマンドの同期に成功しました (グローバル)")
         print("✅ Botはオンライン（緑）になるはずです。サーバーのメンバーリストで確認してください。")
     except Exception as e:
         import traceback
@@ -645,8 +638,9 @@ async def on_ready():
         traceback.print_exc()
 
 
-# --- Asyncプリフライトチェック（タイムアウト＆詳細ログ付き） ---
-async def async_preflight_check(token: str):
+
+# --- 同期プリフライトチェック（requests + Retry-After尊重） ---
+def preflight_check_sync(token: str):
     url = "https://discord.com/api/v10/users/@me"
     headers = {
         "Authorization": f"Bot {token}",
@@ -654,63 +648,45 @@ async def async_preflight_check(token: str):
     }
     backoff = 30
     max_backoff = 300
-
     while True:
         try:
-            timeout = aiohttp.ClientTimeout(total=15, connect=10, sock_read=10)
             print(f"[PREFLIGHT] sending GET {url} ...")
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url, headers=headers) as resp:
-                    status = resp.status
-                    retry_after = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
-                    date_hdr = resp.headers.get("Date")
-                    cf_hdr = resp.headers.get("CF-RAY") or resp.headers.get("CF-Ray")
-                    text = await resp.text()
-                    body_head = text[:120]
-                    print(f"[PREFLIGHT] status={status} retry_after={retry_after} date={date_hdr} cf={cf_hdr}")
-                    print(f"[PREFLIGHT] body_head={body_head!r}")
+            r = requests.get(url, headers=headers, timeout=10)
+            status = r.status_code
+            retry_after = r.headers.get("Retry-After") or r.headers.get("retry-after")
+            date_hdr = r.headers.get("Date")
+            cf_hdr = r.headers.get("CF-RAY") or r.headers.get("CF-Ray")
+            body_head = (r.text or "")[:120]
+            print(f"[PREFLIGHT] status={status} retry_after={retry_after} date={date_hdr} cf={cf_hdr}")
+            print(f"[PREFLIGHT] body_head={body_head!r}")
+            if status == 200:
+                print("[PREFLIGHT] Discord token is valid.")
+                return
+            if status == 401:
+                print("❌ ボットトークンが無効（401）。TOKEN を再確認してください（生トークン／'Bot ' なし・前後スペースなし）。")
+                sys.exit(1)
+            # 429/403/5xx は待機して再試行
+            wait = None
+            try:
+                if retry_after is not None:
+                    wait = int(float(retry_after))
+            except Exception:
+                wait = None
+            if not wait:
+                wait = backoff
+                backoff = min(backoff * 2, max_backoff)
+            print(f"[PREFLIGHT] non-fatal status {status} → {wait}s 待機して再試行")
+            time.sleep(wait)
+        except requests.exceptions.Timeout:
+            print("[PREFLIGHT] timeout (10s) → 30s 後に再試行")
+            time.sleep(30)
+        except requests.exceptions.RequestException as e:
+            print(f"[PREFLIGHT] request error: {e} → 30s 後に再試行")
+            time.sleep(30)
 
-                    if status == 200:
-                        print("[PREFLIGHT] Discord token is valid.")
-                        return
-                    if status == 401:
-                        print("❌ ボットトークンが無効（401）。TOKEN を再確認してください（生トークン／'Bot ' なし・前後スペースなし）。")
-                        sys.exit(1)
-
-                    # 429/403/5xx → Retry-After または指数バックオフで待つ
-                    wait = None
-                    try:
-                        if retry_after is not None:
-                            wait = int(float(retry_after))
-                    except Exception:
-                        wait = None
-                    if not wait:
-                        wait = backoff
-                        backoff = min(backoff * 2, max_backoff)
-                    print(f"[PREFLIGHT] non-fatal status {status} → {wait}s 待機して再試行")
-                    await asyncio.sleep(wait)
-                    continue
-
-        except asyncio.TimeoutError:
-            print("[PREFLIGHT] timeout (15s) → 30s 後に再試行")
-            await asyncio.sleep(30)
-            continue
-        except aiohttp.ClientConnectorError as e:
-            print(f"[PREFLIGHT] connector error: {e} → 30s 後に再試行")
-            await asyncio.sleep(30)
-            continue
-        except Exception as e:
-            print(f"[PREFLIGHT] exception: {e} → 30s 後に再試行")
-            await asyncio.sleep(30)
-            continue
-
-# --- Bot起動処理 ---
-async def start_bot():
-    print("[TRACE] entering start_bot()")
-    await async_preflight_check(TOKEN)
-    print("[TRACE] preflight passed, starting bot.start()")
-    await bot.start(TOKEN)
-
-print("[TRACE] about to enter __main__")
+print("[TRACE] about to enter __main__ block check")
 if __name__ == "__main__":
-    asyncio.run(start_bot())
+    print("[TRACE] __main__ confirmed; running sync preflight then bot.run()")
+    preflight_check_sync(TOKEN)
+    print("[BOOT] bot.run() を開始します…")
+    bot.run(TOKEN)
