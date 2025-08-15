@@ -11,6 +11,7 @@ import google.generativeai as genai
 import tweepy
 import asyncio
 import time
+import sys
 
 # --- Discord共通設定 ---
 intents = discord.Intents.default()
@@ -18,7 +19,11 @@ intents.message_content = True
 intents.members = True
 intents.reactions = True
 bot = discord.Bot(intents=intents)
-TOKEN = os.getenv("TOKEN")
+
+# --- トークン取得: DISCORD_TOKEN優先、なければTOKEN、なければ即死 ---
+TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
+if not TOKEN or len(TOKEN) < 50:
+    sys.exit("ENV DISCORD_TOKEN/TOKEN が未設定か不正です。RenderのEnvironmentでDISCORD_TOKEN(推奨)に生トークンを設定してください。")
 
 # --- Flaskアプリ ---
 app = Flask(__name__)
@@ -136,6 +141,8 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 threading.Thread(target=run_flask, daemon=True).start()
+print(f"[BOOT] discord.py/py-cord version: {getattr(discord, '__version__', 'unknown')}")
+print("[BOOT] Flask thread開始。Bot起動に進みます…")
 
 # --- 新規メンバー時の処理 ---
 @bot.event
@@ -534,6 +541,7 @@ async def on_ready():
         print(f"✅ ログインユーザー: {bot.user} (ID: {bot.user.id})")
         await bot.sync_commands()
         print("✅ スラッシュコマンドの同期に成功しました")
+        print("✅ Botはオンライン（緑）になるはずです。サーバーのメンバーリストで確認してください。")
     except Exception as e:
         import traceback
         print(f"❌ on_ready() 内でエラー発生: {e}")
@@ -543,11 +551,21 @@ async def on_ready():
 if __name__ == "__main__":
     while True:
         try:
+            print("[BOOT] bot.run() を開始します…")
             bot.run(TOKEN)
-            break  # 正常終了したらループ抜ける（必要に応じて）
+            print("[BOOT] bot.run() が終了しました。再起動は行いません。")
+            break
+        except discord.errors.LoginFailure as e:
+            # トークン不正/欠落
+            print(f"❌ LoginFailure: {e}\nトークンが不正の可能性があります。Dev PortalでReset Token→RenderのDISCORD_TOKENを更新してください。")
+            raise
         except discord.HTTPException as e:
             if "429" in str(e) or "Too Many Requests" in str(e):
                 print("❌ 429 Too Many Requests 発生。1時間停止して再試行します…")
-                time.sleep(3600)  # 3600秒 = 1時間
+                time.sleep(3600)
             else:
+                print(f"❌ HTTPException: {e}")
                 raise
+        except Exception as e:
+            print(f"❌ 予期せぬ例外: {e}")
+            raise
