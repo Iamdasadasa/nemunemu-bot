@@ -13,6 +13,14 @@ import asyncio
 import time
 import sys
 
+import logging
+from discord.utils import setup_logging
+
+ # discord.py の詳細ログを有効化（ゲートウェイ/HTTPの動きを把握）
+setup_logging(level=logging.DEBUG)
+logging.getLogger("discord.gateway").setLevel(logging.DEBUG)
+logging.getLogger("discord.http").setLevel(logging.DEBUG)
+
 # --- Discord共通設定 ---
 intents = discord.Intents.default()
 intents.message_content = True
@@ -115,6 +123,8 @@ def webhook_handler():
     if not PROMPT:
         return "❌ PROMPT_TEXT の環境変数が設定されていません。", 500
     try:
+        if model is None:
+            return "❌ GEMINI_API_KEY が未設定のため、このエンドポイントは使用できません。", 500
         response = model.generate_content(PROMPT)
         result = response.text.strip()
         tweet = f"{result}\n{HASHTAGS.strip()}"
@@ -566,6 +576,20 @@ async def quest_post(
     )
 
 # --- スラッシュコマンドはここより上へ！ ---
+
+# ゲートウェイ状態イベントのログを追加
+@bot.event
+async def on_connect():
+    print("[GATEWAY] on_connect (ソケット接続は確立)")
+
+@bot.event
+async def on_resumed():
+    print("[GATEWAY] on_resumed (セッション再開)")
+
+@bot.event
+async def on_disconnect():
+    print("[GATEWAY] on_disconnect (切断)")
+
 @bot.event
 async def on_ready():
     try:
@@ -579,7 +603,23 @@ async def on_ready():
         print(f"❌ on_ready() 内でエラー発生: {e}")
         traceback.print_exc()
 
+# --- 起動前プリフライト: RESTでトークン有効性を確認 ---
+def preflight_check(token: str) -> bool:
+    try:
+        r = requests.get(
+            "https://discord.com/api/v10/users/@me",
+            headers={"Authorization": f"Bot {token}"},
+            timeout=10,
+        )
+        print(f"[PREFLIGHT] status={r.status_code} body={r.text[:120]}")
+        return r.status_code == 200
+    except Exception as e:
+        print(f"[PREFLIGHT] request failed: {e}")
+        return False
+
 print("[TRACE] about to enter __main__")
+if not preflight_check(TOKEN):
+    raise SystemExit("❌ ボットトークンが無効（401）か到達不能。DISCORD_TOKEN を再確認してください。")
 # --- 起動処理 ---
 if __name__ == "__main__":
     while True:
