@@ -31,8 +31,11 @@ app = Flask(__name__)
 # --- Gemini 設定 ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 PROMPT = os.getenv("PROMPT_TEXT", "")
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
+else:
+    model = None  # キー未設定時は使わない
 
 # --- X (Twitter API) 認証 ---
 client = tweepy.Client(
@@ -95,7 +98,11 @@ ROLE_FIRST_TIMER = 1390261208782868590  # 初めてロール
 ROLE_GENERAL = 1390261772853837907      # 一般ロール ←適切なIDに変えて
 
 WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")
-REPRESENTATIVE_COUNCIL_CHANNEL_ID = int(os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID"))
+try:
+    REPRESENTATIVE_COUNCIL_CHANNEL_ID = int(os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID", "0") or "0")
+except ValueError:
+    REPRESENTATIVE_COUNCIL_CHANNEL_ID = 0
+    print("⚠️ REPRESENTATIVE_COUNCIL_CHANNEL_ID が数値でありません。ログ用チャンネル通知は無効化されます。")
 GUIDE_CHANNEL_ID = 1389290096498315364
 
 # --- Flaskエンドポイント ---
@@ -238,19 +245,35 @@ async def on_raw_reaction_add(payload):
 # --- モンスター関連コマンド ---
 def fetch_monsters():
     url = "https://gamewith.jp/mhwilds/452222"
-    res = requests.get(url)
-    soup = BeautifulSoup(res.content, "html.parser")
-    return [li.get("data-name", "").strip() for li in soup.select("ol.monster_weak_list li[data-name]") if li.get("data-name")]
+    try:
+        res = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; nemunemuBot/1.0)"},
+            timeout=10
+        )
+        res.raise_for_status()
+        soup = BeautifulSoup(res.content, "html.parser")
+        return [li.get("data-name", "").strip() for li in soup.select("ol.monster_weak_list li[data-name]") if li.get("data-name")]
+    except Exception as e:
+        print(f"⚠️ fetch_monsters失敗: {e}")
+        return []
 
-MONSTERS = fetch_monsters()
+MONSTERS = []
+
+def _warmup_monsters():
+    global MONSTERS
+    MONSTERS = fetch_monsters()
+    print(f"[WARMUP] MONSTERS 読込: {len(MONSTERS)} 件")
+
+threading.Thread(target=_warmup_monsters, daemon=True).start()
 
 @bot.slash_command(name="モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
 async def monster(ctx):
-    if MONSTERS:
-        name = random.choice(MONSTERS)
-        await ctx.respond(f"あなたのモンスターは… 🐲 **{name}** だ！")
-    else:
-        await ctx.respond("モンスターが見つからなかったよ😢")
+    if not MONSTERS:
+        await ctx.respond("⚠️ モンスターリストを読み込み中か取得に失敗しました。少し待って /モンスターリスト更新 を試してください。", ephemeral=True)
+        return
+    name = random.choice(MONSTERS)
+    await ctx.respond(f"あなたのモンスターは… 🐲 **{name}** だ！")
 
 
 @bot.slash_command(name="モンスターリスト更新", description="モンスターリストを更新するよ")
@@ -350,50 +373,59 @@ async def party(ctx, size: int = 4):
 # --- イベント取得系 ---
 EVENT_URL = "https://gamewith.jp/mhwilds/484117"
 def fetch_events():
-    res = requests.get(EVENT_URL)
-    soup = BeautifulSoup(res.content, "html.parser")
-    items = soup.find_all("div", class_="_item")
-    current_events, upcoming_events = [], []
-    for item in items:
-        head = item.find("div", class_="_head")
-        title_tag = head.find("a") if head else None
-        held_div = head.find("div", class_="_held") if head else None
-        if not title_tag: continue
-        name = title_tag.text.strip()
-        link = title_tag["href"]
-        status = held_div.text.strip() if held_div else "不明"
-        body = item.find("div", class_="_body")
-        if not body: continue
-        info = body.find("div", class_="_info")
-        if not info: continue
-        labels = info.find_all("div", class_="_label-9")
-        all_divs = info.find_all("div")
-        values = []
-        skip_next = False
-        for i, div in enumerate(all_divs):
-            if skip_next:
-                skip_next = False
-                continue
-            if div in labels:
-                if i + 1 < len(all_divs):
-                    values.append(all_divs[i + 1])
-                    skip_next = True
-        event_info = {"タイトル": name, "URL": link}
-        for label, value in zip(labels, values):
-            key = label.text.strip()
-            val = value.get_text(separator="\n", strip=True)
-            event_info[key] = val
-        if "開催中" in status:
-            current_events.append(event_info)
-        elif "開催予定" in status:
-            upcoming_events.append(event_info)
-    return current_events, upcoming_events
+    try:
+        res = requests.get(
+            EVENT_URL,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; nemunemuBot/1.0)"},
+            timeout=10
+        )
+        res.raise_for_status()
+        soup = BeautifulSoup(res.content, "html.parser")
+        items = soup.find_all("div", class_="_item")
+        current_events, upcoming_events = [], []
+        for item in items:
+            head = item.find("div", class_="_head")
+            title_tag = head.find("a") if head else None
+            held_div = head.find("div", class_="_held") if head else None
+            if not title_tag: continue
+            name = title_tag.text.strip()
+            link = title_tag["href"]
+            status = held_div.text.strip() if held_div else "不明"
+            body = item.find("div", class_="_body")
+            if not body: continue
+            info = body.find("div", class_="_info")
+            if not info: continue
+            labels = info.find_all("div", class_="_label-9")
+            all_divs = info.find_all("div")
+            values = []
+            skip_next = False
+            for i, div in enumerate(all_divs):
+                if skip_next:
+                    skip_next = False
+                    continue
+                if div in labels:
+                    if i + 1 < len(all_divs):
+                        values.append(all_divs[i + 1])
+                        skip_next = True
+            event_info = {"タイトル": name, "URL": link}
+            for label, value in zip(labels, values):
+                key = label.text.strip()
+                val = value.get_text(separator="\n", strip=True)
+                event_info[key] = val
+            if "開催中" in status:
+                current_events.append(event_info)
+            elif "開催予定" in status:
+                upcoming_events.append(event_info)
+        return current_events, upcoming_events
+    except Exception as e:
+        print(f"⚠️ fetch_events失敗: {e}")
+        return [], []
 
 @bot.slash_command(name="イベント開催中", description="現在開催中のイベント一覧を表示します")
 async def current(ctx):
     events, _ = fetch_events()
     if not events:
-        await ctx.respond("現在開催中のイベントは見つかりませんでした。")
+        await ctx.respond("⚠️ 現在開催中のイベントは取得できませんでした。（サイト応答なし/形式変更の可能性）", ephemeral=True)
         return
     for e in events:
         msg = (
@@ -410,7 +442,7 @@ async def current(ctx):
 async def upcoming(ctx):
     _, events = fetch_events()
     if not events:
-        await ctx.respond("開催予定のイベントは見つかりませんでした。")
+        await ctx.respond("⚠️ 開催予定イベントは取得できませんでした。（サイト応答なし/形式変更の可能性）", ephemeral=True)
         return
     for e in events:
         msg = (
@@ -547,6 +579,7 @@ async def on_ready():
         print(f"❌ on_ready() 内でエラー発生: {e}")
         traceback.print_exc()
 
+print("[TRACE] about to enter __main__")
 # --- 起動処理 ---
 if __name__ == "__main__":
     while True:
