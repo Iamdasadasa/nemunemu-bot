@@ -198,7 +198,7 @@ print("[BOOT] Flask thread開始。Bot起動に進みます…")
 # --- 新規メンバー時の処理 ---
 @bot.event
 async def on_member_join(member):
-    guild = member.guild    
+    guild = member.guild
     role = guild.get_role(ROLE_FIRST_TIMER)
     log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
     guide_channel = guild.get_channel(GUIDE_CHANNEL_ID)
@@ -629,8 +629,9 @@ async def on_ready():
     try:
         print("✅ on_ready() に入りました！")
         print(f"✅ ログインユーザー: {bot.user} (ID: {bot.user.id})")
-        await bot.tree.sync()
-        print("✅ スラッシュコマンドの同期に成功しました (グローバル)")
+        print("🔄 スラッシュコマンド同期を開始（py-cord）…")
+        synced = await bot.sync_commands()
+        print(f"✅ スラッシュコマンドの同期に成功しました (py-cord) count={len(synced)}")
         print("✅ Botはオンライン（緑）になるはずです。サーバーのメンバーリストで確認してください。")
     except Exception as e:
         import traceback
