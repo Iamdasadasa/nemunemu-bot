@@ -12,6 +12,7 @@ import tweepy
 import asyncio
 import time
 import sys
+import aiohttp
 
 import logging
 import base64
@@ -41,11 +42,13 @@ intents.members = True
 intents.reactions = True
 bot = discord.Bot(intents=intents)
 
-# --- トークン取得: TOKEN のみ ---
 TOKEN = (os.getenv("TOKEN") or "").strip()
 if not TOKEN or len(TOKEN) < 50:
     sys.exit("ENV TOKEN が未設定か不正です。RenderのEnvironmentで TOKEN に **生トークン**（先頭に 'Bot ' を付けない）を設定してください。")
 print(f"[DEBUG] Loaded TOKEN length={len(TOKEN)} preview={TOKEN[:4]}...{TOKEN[-4:] if len(TOKEN) >= 8 else ''}")
+
+# Optional GUILD_ID for slash command sync
+GUILD_ID = os.getenv("GUILD_ID")
 
 # 追加: トークンの安全なダンプ（不可視文字とBot IDの検証用）
 def _debug_token_snapshot(tok: str):
@@ -628,70 +631,61 @@ async def on_ready():
     try:
         print("✅ on_ready() に入りました！")
         print(f"✅ ログインユーザー: {bot.user} (ID: {bot.user.id})")
-        await bot.sync_commands()
-        print("✅ スラッシュコマンドの同期に成功しました")
+        if GUILD_ID:
+            guild = discord.Object(id=int(GUILD_ID))
+            await bot.tree.sync(guild=guild)
+            print(f"✅ スラッシュコマンドの同期に成功しました (guild限定: {GUILD_ID})")
+        else:
+            await bot.tree.sync()
+            print("✅ スラッシュコマンドの同期に成功しました (グローバル)")
         print("✅ Botはオンライン（緑）になるはずです。サーバーのメンバーリストで確認してください。")
     except Exception as e:
         import traceback
         print(f"❌ on_ready() 内でエラー発生: {e}")
         traceback.print_exc()
 
-# --- 起動前プリフライト: RESTでトークン有効性を確認（詳細ログ付き） ---
-def preflight_check(token: str) -> bool:
-    try:
-        r = requests.get(
-            "https://discord.com/api/v10/users/@me",
-            headers={
-                "Authorization": f"Bot {token}",
-                "User-Agent": "nemunemuBot/1.0 (+render)",
-            },
-            timeout=10,
-        )
-        # ヘッダと本文の頭だけ出す（Retry-Afterの有無も確認）
-        retry_after = r.headers.get("Retry-After") or r.headers.get("retry-after")
-        date_hdr = r.headers.get("Date")
-        cf_hdr = r.headers.get("CF-RAY") or r.headers.get("CF-Ray")
-        print(f"[PREFLIGHT] status={r.status_code} retry_after={retry_after} date={date_hdr} cf={cf_hdr}")
-        body_head = (r.text or "")[:120]
-        print(f"[PREFLIGHT] body_head={body_head!r}")
-        if r.status_code == 200:
-            return True  # トークンOK
-        if r.status_code == 401:
-            return False  # 本当に無効
-        # 429/403/5xx などは非致命として続行（本番での連続再デプロイ地獄を避ける）
-        print(f"[PREFLIGHT] non-fatal status {r.status_code} → 続行して bot.run() へ")
-        return True
-    except Exception as e:
-        print(f"[PREFLIGHT] exception: {e} → 続行")
-        return True
 
-print("[TRACE] about to enter __main__")
-if not preflight_check(TOKEN):
-    raise SystemExit("❌ ボットトークンが無効（401）。TOKEN を再確認してください（生トークン／'Bot ' なし・前後スペースなし）。")
-# --- 起動処理 ---
-if __name__ == "__main__":
+# --- Asyncプリフライトチェック ---
+async def async_preflight_check(token: str):
+    url = "https://discord.com/api/v10/users/@me"
+    headers = {
+        "Authorization": f"Bot {token}",
+        "User-Agent": "nemunemuBot/1.0 (+render)",
+    }
     while True:
         try:
-            print("[BOOT] bot.run() を開始します…")
-            bot.run(TOKEN)
-            print("[BOOT] bot.run() が終了しました。再起動は行いません。")
-            break
-        except discord.errors.LoginFailure as e:
-            # トークン不正/欠落
-            print(f"❌ LoginFailure: {e}\nトークンが不正の可能性があります。Dev PortalでReset Token→RenderのDISCORD_TOKENを更新してください。")
-            raise
-        except discord.HTTPException as e:
-            if "429" in str(e) or "Too Many Requests" in str(e):
-                print("❌ 429 Too Many Requests 発生。1時間停止して再試行します…")
-                time.sleep(3600)
-            else:
-                ra = None
-                try:
-                    ra = getattr(getattr(e, "response", None), "headers", {}).get("Retry-After")
-                except Exception:
-                    pass
-                print(f"❌ HTTPException: {e} retry_after={ra}")
-                raise
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    status = resp.status
+                    retry_after = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
+                    date_hdr = resp.headers.get("Date")
+                    cf_hdr = resp.headers.get("CF-RAY") or resp.headers.get("CF-Ray")
+                    body_head = (await resp.text())[:120]
+                    print(f"[PREFLIGHT] status={status} retry_after={retry_after} date={date_hdr} cf={cf_hdr}")
+                    print(f"[PREFLIGHT] body_head={body_head!r}")
+                    if status == 200:
+                        print("[PREFLIGHT] Discord token is valid.")
+                        return
+                    elif status == 401:
+                        print("❌ ボットトークンが無効（401）。TOKEN を再確認してください（生トークン／'Bot ' なし・前後スペースなし）。")
+                        sys.exit(1)
+                    elif status == 429:
+                        wait = float(retry_after or 5)
+                        print(f"❌ 429 Too Many Requests. Waiting for {wait} seconds before retrying...")
+                        await asyncio.sleep(wait)
+                        continue
+                    else:
+                        print(f"[PREFLIGHT] non-fatal status {status} → retrying in 5s")
+                        await asyncio.sleep(5)
         except Exception as e:
-            print(f"❌ 予期せぬ例外: {e}")
-            raise
+            print(f"[PREFLIGHT] exception: {e} → retrying in 10s")
+            await asyncio.sleep(10)
+
+# --- Bot起動処理 ---
+async def start_bot():
+    await async_preflight_check(TOKEN)
+    await bot.start(TOKEN)
+
+print("[TRACE] about to enter __main__")
+if __name__ == "__main__":
+    asyncio.run(start_bot())
