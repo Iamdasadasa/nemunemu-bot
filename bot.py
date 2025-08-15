@@ -40,10 +40,10 @@ intents.members = True
 intents.reactions = True
 bot = discord.Bot(intents=intents)
 
-# --- トークン取得: DISCORD_TOKEN優先、なければTOKEN、なければ即死 ---
-TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
+# --- トークン取得: TOKEN のみ ---
+TOKEN = os.getenv("TOKEN")
 if not TOKEN or len(TOKEN) < 50:
-    sys.exit("ENV DISCORD_TOKEN/TOKEN が未設定か不正です。RenderのEnvironmentでDISCORD_TOKEN(推奨)に生トークンを設定してください。")
+    sys.exit("ENV TOKEN が未設定か不正です。RenderのEnvironmentで TOKEN に **生トークン**（先頭に 'Bot ' を付けない）を設定してください。")
 
 # --- Flaskアプリ ---
 app = Flask(__name__)
