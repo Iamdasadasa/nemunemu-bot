@@ -616,23 +616,33 @@ async def on_ready():
         print(f"❌ on_ready() 内でエラー発生: {e}")
         traceback.print_exc()
 
-# --- 起動前プリフライト: RESTでトークン有効性を確認 ---
+# --- 起動前プリフライト: RESTでトークン有効性を確認（429/5xxは非致命） ---
 def preflight_check(token: str) -> bool:
     try:
         r = requests.get(
             "https://discord.com/api/v10/users/@me",
-            headers={"Authorization": f"Bot {token}"},
+            headers={
+                "Authorization": f"Bot {token}",
+                "User-Agent": "nemunemuBot/1.0 (+render)",
+            },
             timeout=10,
         )
-        print(f"[PREFLIGHT] status={r.status_code} body={r.text[:120]}")
-        return r.status_code == 200
+        head = (r.text or "")[:120]
+        print(f"[PREFLIGHT] status={r.status_code} body_head={head!r}")
+        if r.status_code == 200:
+            return True  # トークンOK
+        if r.status_code == 401:
+            return False  # 本当に無効
+        # 429/403/5xx などは非致命として続行
+        print(f"[PREFLIGHT] non-fatal status {r.status_code} → 続行して bot.run() へ")
+        return True
     except Exception as e:
-        print(f"[PREFLIGHT] request failed: {e}")
-        return False
+        print(f"[PREFLIGHT] exception: {e} → 続行")
+        return True
 
 print("[TRACE] about to enter __main__")
 if not preflight_check(TOKEN):
-    raise SystemExit("❌ ボットトークンが無効（401）か到達不能。DISCORD_TOKEN を再確認してください。")
+    raise SystemExit("❌ ボットトークンが無効（401）。TOKEN を再確認してください（生トークン／'Bot ' なし・前後スペースなし）。")
 # --- 起動処理 ---
 if __name__ == "__main__":
     while True:
@@ -643,7 +653,7 @@ if __name__ == "__main__":
             break
         except discord.errors.LoginFailure as e:
             # トークン不正/欠落
-            print(f"❌ LoginFailure: {e}\nトークンが不正の可能性があります。Dev PortalでReset Token→RenderのDISCORD_TOKENを更新してください。")
+            print(f"❌ LoginFailure: {e}\nトークンが不正の可能性があります。Dev Portalで Reset Token → Render の TOKEN を更新してください（生トークン）。")
             raise
         except discord.HTTPException as e:
             if "429" in str(e) or "Too Many Requests" in str(e):
