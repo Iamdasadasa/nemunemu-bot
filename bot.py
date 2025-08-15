@@ -645,45 +645,70 @@ async def on_ready():
         traceback.print_exc()
 
 
-# --- Asyncプリフライトチェック ---
+# --- Asyncプリフライトチェック（タイムアウト＆詳細ログ付き） ---
 async def async_preflight_check(token: str):
     url = "https://discord.com/api/v10/users/@me"
     headers = {
         "Authorization": f"Bot {token}",
         "User-Agent": "nemunemuBot/1.0 (+render)",
     }
+    backoff = 30
+    max_backoff = 300
+
     while True:
         try:
-            async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=15, connect=10, sock_read=10)
+            print(f"[PREFLIGHT] sending GET {url} ...")
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, headers=headers) as resp:
                     status = resp.status
                     retry_after = resp.headers.get("Retry-After") or resp.headers.get("retry-after")
                     date_hdr = resp.headers.get("Date")
                     cf_hdr = resp.headers.get("CF-RAY") or resp.headers.get("CF-Ray")
-                    body_head = (await resp.text())[:120]
+                    text = await resp.text()
+                    body_head = text[:120]
                     print(f"[PREFLIGHT] status={status} retry_after={retry_after} date={date_hdr} cf={cf_hdr}")
                     print(f"[PREFLIGHT] body_head={body_head!r}")
+
                     if status == 200:
                         print("[PREFLIGHT] Discord token is valid.")
                         return
-                    elif status == 401:
+                    if status == 401:
                         print("❌ ボットトークンが無効（401）。TOKEN を再確認してください（生トークン／'Bot ' なし・前後スペースなし）。")
                         sys.exit(1)
-                    elif status == 429:
-                        wait = float(retry_after or 5)
-                        print(f"❌ 429 Too Many Requests. Waiting for {wait} seconds before retrying...")
-                        await asyncio.sleep(wait)
-                        continue
-                    else:
-                        print(f"[PREFLIGHT] non-fatal status {status} → retrying in 5s")
-                        await asyncio.sleep(5)
+
+                    # 429/403/5xx → Retry-After または指数バックオフで待つ
+                    wait = None
+                    try:
+                        if retry_after is not None:
+                            wait = int(float(retry_after))
+                    except Exception:
+                        wait = None
+                    if not wait:
+                        wait = backoff
+                        backoff = min(backoff * 2, max_backoff)
+                    print(f"[PREFLIGHT] non-fatal status {status} → {wait}s 待機して再試行")
+                    await asyncio.sleep(wait)
+                    continue
+
+        except asyncio.TimeoutError:
+            print("[PREFLIGHT] timeout (15s) → 30s 後に再試行")
+            await asyncio.sleep(30)
+            continue
+        except aiohttp.ClientConnectorError as e:
+            print(f"[PREFLIGHT] connector error: {e} → 30s 後に再試行")
+            await asyncio.sleep(30)
+            continue
         except Exception as e:
-            print(f"[PREFLIGHT] exception: {e} → retrying in 10s")
-            await asyncio.sleep(10)
+            print(f"[PREFLIGHT] exception: {e} → 30s 後に再試行")
+            await asyncio.sleep(30)
+            continue
 
 # --- Bot起動処理 ---
 async def start_bot():
+    print("[TRACE] entering start_bot()")
     await async_preflight_check(TOKEN)
+    print("[TRACE] preflight passed, starting bot.start()")
     await bot.start(TOKEN)
 
 print("[TRACE] about to enter __main__")
