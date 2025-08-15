@@ -14,12 +14,24 @@ import time
 import sys
 
 import logging
-from discord.utils import setup_logging
 
- # discord.py の詳細ログを有効化（ゲートウェイ/HTTPの動きを把握）
-setup_logging(level=logging.DEBUG)
-logging.getLogger("discord.gateway").setLevel(logging.DEBUG)
-logging.getLogger("discord.http").setLevel(logging.DEBUG)
+# discord.py/py-cord のバージョン差異に対応したロギング設定
+try:
+    from discord.utils import setup_logging as _setup_logging  # discord.py 2.3+
+    def setup_discord_logging():
+        _setup_logging(level=logging.DEBUG)
+        logging.getLogger("discord.gateway").setLevel(logging.DEBUG)
+        logging.getLogger("discord.http").setLevel(logging.DEBUG)
+except Exception:
+    def setup_discord_logging():
+        # 古いpy-cordなど setup_logging が無い場合のフォールバック
+        logging.basicConfig(level=logging.DEBUG)
+        logging.getLogger("discord").setLevel(logging.DEBUG)
+        logging.getLogger("discord.gateway").setLevel(logging.DEBUG)
+        logging.getLogger("discord.http").setLevel(logging.DEBUG)
+
+# ログ設定を適用（Bot生成前に実行）
+setup_discord_logging()
 
 # --- Discord共通設定 ---
 intents = discord.Intents.default()
