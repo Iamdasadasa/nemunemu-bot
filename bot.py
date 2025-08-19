@@ -778,30 +778,81 @@ async def cleanup_now(ctx):
 
     await ctx.defer(ephemeral=True)
 
+    start_count = len(TEMP_VCS)
     removed_channels = 0
     errors = 0
+    not_found = 0
 
     # TEMP_VCS に記録されたVCのみを対象に削除
     for vc_id in list(TEMP_VCS.keys()):
-        found = False
-        for guild in bot.guilds:
-            ch = guild.get_channel(vc_id)
-            if ch and isinstance(ch, discord.VoiceChannel):
-                found = True
-                try:
-                    await ch.delete(reason="手動クリーンアップ（管理者コマンド）")
-                    removed_channels += 1
-                except Exception as e:
-                    errors += 1
-                break  # 見つかったら他ギルドは見ない
-        # メタ情報側も掃除
+        ch = bot.get_channel(vc_id)  # まずはグローバルキャッシュから取得
+        if ch is None or not isinstance(ch, discord.VoiceChannel):
+            # 念のため各ギルドにも当たってみる
+            for guild in bot.guilds:
+                _ch = guild.get_channel(vc_id)
+                if _ch and isinstance(_ch, discord.VoiceChannel):
+                    ch = _ch
+                    break
+
+        if ch and isinstance(ch, discord.VoiceChannel):
+            try:
+                await ch.delete(reason="手動クリーンアップ（管理者コマンド）")
+                removed_channels += 1
+            except Exception:
+                errors += 1
+        else:
+            # 見つからなければ not_found としてカウント（メタだけ掃除）
+            not_found += 1
+
+        # いずれにせよメタ情報側も掃除
         TEMP_VCS.pop(vc_id, None)
+        # 逆引き/パスコードも関連分を掃除
+        for th_id, v_id in list(THREAD_TO_VC.items()):
+            if v_id == vc_id:
+                THREAD_TO_VC.pop(th_id, None)
+        for code, v_id in list(VC_PASSCODES.items()):
+            if v_id == vc_id:
+                VC_PASSCODES.pop(code, None)
 
-    # パスコードとスレッド連携も全消し
-    VC_PASSCODES.clear()
-    THREAD_TO_VC.clear()
+    await ctx.respond(
+        f"🧹 クリーンアップ完了：\n"
+        f"- 対象（開始時点）: {start_count} 件\n"
+        f"- 削除成功: {removed_channels} 件\n"
+        f"- 見つからずメタのみ削除: {not_found} 件\n"
+        f"- エラー: {errors} 件",
+        ephemeral=True
+    )
 
-    await ctx.respond(f"🧹 クリーンアップ完了：VC {removed_channels} 件削除 / エラー {errors} 件。", ephemeral=True)
+# --- クリーン対象の現状確認（管理者専用） ---
+@bot.slash_command(
+    name="299_クリーン状況",
+    description="Bot管理対象の一時VCメタ情報を一覧表示（管理者専用）",
+    default_member_permissions=discord.Permissions(administrator=True),
+    dm_permission=False
+)
+async def cleanup_status(ctx):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
+        return
+
+    count = len(TEMP_VCS)
+    if count == 0:
+        await ctx.respond("（現在管理対象の一時VCは 0 件です）", ephemeral=True)
+        return
+
+    # 最大 20 件まで表示（長くなりすぎ防止）
+    lines = []
+    for i, (vcid, meta) in enumerate(list(TEMP_VCS.items())[:20], start=1):
+        owner = meta.get("owner_id")
+        thread = meta.get("thread_id")
+        created = meta.get("created_at")
+        lines.append(f"{i}. VCID: {vcid} / owner: {owner} / thread: {thread} / created: {created}")
+
+    more = ""
+    if count > 20:
+        more = f"\n… ほか {count-20} 件"
+
+    await ctx.respond(f"📋 管理対象 VC: {count} 件\n" + "\n".join(lines) + more, ephemeral=True)
 
  # --- 起動前プリフライト: /users/@me でトークン疎通確認 & レート制限尊重 ---
 def preflight_check_sync(token: str):
