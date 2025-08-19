@@ -14,6 +14,25 @@ import asyncio
 import time
 import re
 
+import sys, logging
+
+# --- Stdout immediate flush & logging setup ---
+try:
+    # Render等の環境でログを即時出力
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+logging.basicConfig(
+    level=logging.INFO,  # 必要に応じて DEBUG
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+try:
+    # discord.py/py-cord の内部ログも出す
+    discord.utils.setup_logging(level=logging.INFO)
+except Exception:
+    pass
+
 # --- Discord共通設定 ---
 intents = discord.Intents.default()
 intents.message_content = True
@@ -63,6 +82,15 @@ def _parse_env_list(raw: str) -> list[str]:
     # カンマも改行もセパレータとして扱う
     parts = [p.strip() for p in re.split(r"[,\n]+", raw) if p.strip()]
     return parts
+
+# ---- 日本語有効/無効・bool解釈ヘルパ ----
+def _ja_bool(val):
+    """
+    "有効"/"無効"（str）や bool を受け取り、True/False を返す。
+    """
+    if isinstance(val, str):
+        return val.strip() == "有効"
+    return bool(val)
 
 # ---- 武器リスト（環境変数優先・なければ既定） ----
 _DEFAULT_WEAPONS = [
@@ -138,6 +166,19 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 threading.Thread(target=run_flask, daemon=True).start()
+
+# --- Gateway 状態ログ ---
+@bot.event
+async def on_connect():
+    print("[GATEWAY] on_connect (ソケット接続は確立)", flush=True)
+
+@bot.event
+async def on_resumed():
+    print("[GATEWAY] on_resumed (セッション再開)", flush=True)
+
+@bot.event
+async def on_disconnect():
+    print("[GATEWAY] on_disconnect (切断)", flush=True)
 
 # --- 新規メンバー時の処理 ---
 @bot.event
@@ -288,8 +329,9 @@ async def party(ctx, size: int = 4):
 async def area_draw(
     ctx,
     数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
-    重複許可: discord.Option(bool, description="同じエリアが複数回出てもよい", required=False, default=False)
+    重複許可: discord.Option(str, description="同じエリアが複数回出てもよい（有効/無効）", choices=["有効", "無効"], required=False, default="無効")
 ):
+    重複許可 = _ja_bool(重複許可)
     if not AREAS:
         await ctx.respond(
             "❌ エリア一覧が空です。Renderの環境変数 `AREA_LIST` にエリア名をカンマまたは改行で設定してください。\n"
@@ -344,8 +386,9 @@ async def area_reload(ctx):
 async def weapon_draw(
     ctx,
     数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
-    重複許可: discord.Option(bool, description="同じ武器が複数回出てもよい", required=False, default=False)
+    重複許可: discord.Option(str, description="同じ武器が複数回出てもよい（有効/無効）", choices=["有効", "無効"], required=False, default="無効")
 ):
+    重複許可 = _ja_bool(重複許可)
     if not WEAPONS:
         await ctx.respond(
             "❌ 武器一覧が空です。Renderの環境変数 `WEAPON_LIST` に武器名をカンマまたは改行で設定してください。\n"
@@ -488,13 +531,14 @@ async def quest_post(
     # === 任意（required=False）===
     場所: discord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", required=False, default=None),
     募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", required=False, default=""),
-    ボイスルーム_作成: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", required=False, default=False),
+    ボイスルーム_作成: discord.Option(str, description="募集と同時に一時VCを作成しますか？（有効/無効）", choices=["有効", "無効"], required=False, default="無効"),
     ボイスルーム_名称: discord.Option(str, description="作成するVCの名前（未指定なら自動）", required=False, default=""),
     ボイスルーム_パスワード: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", required=False, default="")
 ):
     await ctx.defer()
 
     内容 = 募集カスタム内容 if 募集カスタム内容 else 募集テンプレ内容
+    ボイスルーム_作成 = _ja_bool(ボイスルーム_作成)
 
     embed = discord.Embed(title=f"🎯 クエスト募集（by {ctx.author.mention}）", color=0x4CAF50)
     embed.add_field(name="⏰ 時間", value=f"→ __{時間}__", inline=False)
@@ -519,12 +563,28 @@ async def quest_post(
     if ボイスルーム_作成:
         parent_category = ctx.guild.get_channel(VC_CATEGORY_ID) if VC_CATEGORY_ID else ctx.channel.category
 
-        overwrites = None
+        # 作成者がそのVCを管理できるようにするオーバーライド（編集/削除に必要な権限を付与）
+        author_overwrite = discord.PermissionOverwrite(
+            view_channel=True,
+            connect=True,
+            speak=True,
+            move_members=True,
+            mute_members=True,
+            deafen_members=True,
+            manage_channels=True,      # このチャンネルの編集/削除
+            manage_permissions=True    # このチャンネルの権限編集
+        )
+
+        # パスコード指定時は一般公開にせず、作成者だけ見える/入れる
         if ボイスルーム_パスワード and ボイスルーム_パスワード.strip():
-            # パスコード指定時のみ非公開にして発起人に権限を付与
             overwrites = {
                 ctx.guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
-                ctx.author: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True),
+                ctx.author: author_overwrite,
+            }
+        else:
+            # 公開VCだが、作成者には管理権限を与える
+            overwrites = {
+                ctx.author: author_overwrite,
             }
 
         # VC名
@@ -575,11 +635,11 @@ async def quest_post(
         if ボイスルーム_パスワード.strip():
             await thread.send(
                 f"🔐 このVCはパスコード制です。\n"
-                f"入室したい方は `/102_vc入室 code:{ボイスルーム_パスワード.strip()}` を実行してください。\n"
+                f"入室したい方は `/102_パス付きボイスルーム入室 code:{ボイスルーム_パスワード.strip()}` を実行してください。\n"
                 f"（実行した人だけ、このVCへの接続許可が自動で付きます）"
             )
 
-@bot.slash_command(name="102_vc入室", description="パスコードを入力して、対象VCへの接続権限を付与します")
+@bot.slash_command(name="102_パス付きボイスルーム入室", description="パスコードを入力して、対象VCへの接続権限を付与します")
 async def vc_join(ctx, code: discord.Option(str, description="配布されたパスコード")):
     vc_id = VC_PASSCODES.get(code.strip())
     if not vc_id:
@@ -601,6 +661,68 @@ async def vc_join(ctx, code: discord.Option(str, description="配布されたパ
         await ctx.respond(f"✅ `{channel.name}` への入室権限を付与しました。", ephemeral=True)
     except discord.Forbidden:
         await ctx.respond("⚠️ 権限不足で許可を付与できませんでした。", ephemeral=True)
+
+
+# --- VC削除コマンド ---
+@bot.slash_command(name="103_vc削除", description="Botが作った一時VCを削除します（作成者または管理者）")
+async def vc_delete(
+    ctx,
+    対象: discord.Option(discord.VoiceChannel, description="削除するVC（未指定なら現在地かスレッド関連を自動推定）", required=False, default=None)
+):
+    # 推定ロジック：
+    target_ch = 対象
+
+    # 1) 未指定なら、実行者が今いるVC
+    if target_ch is None and isinstance(ctx.author, discord.Member) and ctx.author.voice and ctx.author.voice.channel:
+        if isinstance(ctx.author.voice.channel, discord.VoiceChannel):
+            target_ch = ctx.author.voice.channel
+
+    # 2) それでも無ければ、実行されたチャンネルがスレッドで、紐づくVCがあればそれ
+    if target_ch is None and isinstance(ctx.channel, discord.Thread):
+        vc_id = THREAD_TO_VC.get(ctx.channel.id)
+        if vc_id:
+            ch = ctx.guild.get_channel(vc_id)
+            if isinstance(ch, discord.VoiceChannel):
+                target_ch = ch
+
+    if target_ch is None or not isinstance(target_ch, discord.VoiceChannel):
+        await ctx.respond("❌ 対象のVCが特定できません。オプションでVCを指定するか、VCに入ってから実行してください。", ephemeral=True)
+        return
+
+    # Botが作ったVCか確認
+    meta = TEMP_VCS.get(target_ch.id)
+    if not meta:
+        await ctx.respond("⚠️ このVCはBot管理対象ではありません（手動作成か、既にメタ情報が破棄されています）。", ephemeral=True)
+        return
+
+    owner_id = meta.get("owner_id")
+    is_admin = ctx.author.guild_permissions.administrator
+    if not (is_admin or ctx.author.id == owner_id):
+        await ctx.respond("❌ このVCを削除できるのは作成者か管理者のみです。", ephemeral=True)
+        return
+
+    # 削除実行
+    try:
+        await target_ch.delete(reason=f"{ctx.author} による /103_vc削除 実行")
+    except discord.Forbidden:
+        await ctx.respond("⚠️ 権限不足で削除できませんでした（Botに『チャンネルを管理』権限が必要です）。", ephemeral=True)
+        return
+    except Exception as e:
+        await ctx.respond(f"❌ 削除中にエラー: {e}", ephemeral=True)
+        return
+
+    # メタ掃除
+    TEMP_VCS.pop(target_ch.id, None)
+    # 逆引き
+    for th_id, vcid in list(THREAD_TO_VC.items()):
+        if vcid == target_ch.id:
+            THREAD_TO_VC.pop(th_id, None)
+    # パスコード紐付けも掃除
+    for code, vcid in list(VC_PASSCODES.items()):
+        if vcid == target_ch.id:
+            VC_PASSCODES.pop(code, None)
+
+    await ctx.respond("🗑️ VCを削除しました。", ephemeral=True)
 
 @bot.event
 async def on_thread_update(before: discord.Thread, after: discord.Thread):
@@ -642,6 +764,49 @@ async def daily_cleanup_vcs():
 async def before_cleanup():
     await bot.wait_until_ready()
 
+ # --- 起動前プリフライト: /users/@me でトークン疎通確認 & レート制限尊重 ---
+def preflight_check_sync(token: str):
+    url = "https://discord.com/api/v10/users/@me"
+    headers = {
+        "Authorization": f"Bot {token}",
+        "User-Agent": "nemunemuBot/1.0 (+render)",
+    }
+    backoff = 30
+    max_backoff = 300
+    while True:
+        try:
+            print(f"[PREFLIGHT] GET {url} ...", flush=True)
+            r = requests.get(url, headers=headers, timeout=10)
+            status = r.status_code
+            retry_after = r.headers.get("Retry-After") or r.headers.get("retry-after")
+            date_hdr = r.headers.get("Date")
+            cf_hdr = r.headers.get("CF-RAY") or r.headers.get("CF-Ray")
+            body_head = (r.text or "")[:120]
+            print(f"[PREFLIGHT] status={status} retry_after={retry_after} date={date_hdr} cf={cf_hdr}", flush=True)
+            print(f"[PREFLIGHT] body_head={body_head!r}", flush=True)
+            if status == 200:
+                print("[PREFLIGHT] Discord token is valid.", flush=True)
+                return
+            if status == 401:
+                print("❌ ボットトークンが無効（401）。TOKEN を再確認してください。", flush=True)
+                raise SystemExit(1)
+            # 429/403/5xx は待機して再試行
+            try:
+                wait = int(float(retry_after)) if retry_after is not None else None
+            except Exception:
+                wait = None
+            if not wait:
+                wait = backoff
+            backoff = min((backoff * 2), max_backoff)
+            print(f"[PREFLIGHT] non-fatal status {status} → {wait}s 待機して再試行", flush=True)
+            time.sleep(wait)
+        except requests.exceptions.Timeout:
+            print("[PREFLIGHT] timeout (10s) → 30s 後に再試行", flush=True)
+            time.sleep(30)
+        except requests.exceptions.RequestException as e:
+            print(f"[PREFLIGHT] request error: {e} → 30s 後に再試行", flush=True)
+            time.sleep(30)
+
 # --- スラッシュコマンドはここより上へ！ ---
 @bot.event
 async def on_ready():
@@ -657,15 +822,22 @@ async def on_ready():
         print(f"❌ on_ready() 内でエラー発生: {e}")
         traceback.print_exc()
 
+print("[TRACE] about to enter __main__ block check", flush=True)
 # --- 起動処理 ---
 if __name__ == "__main__":
+    print("[TRACE] __main__ confirmed; running sync preflight then bot.run()", flush=True)
+    if not TOKEN:
+        print("❌ TOKEN が未設定です。環境変数 TOKEN を設定してください。", flush=True)
+        raise SystemExit(1)
+    preflight_check_sync(TOKEN)
+    print("[BOOT] bot.run() を開始します…", flush=True)
     while True:
         try:
             bot.run(TOKEN)
-            break  # 正常終了したらループ抜ける（必要に応じて）
+            break  # 正常終了したらループ抜ける
         except discord.HTTPException as e:
             if "429" in str(e) or "Too Many Requests" in str(e):
-                print("❌ 429 Too Many Requests 発生。1時間停止して再試行します…")
+                print("❌ 429 Too Many Requests 発生。1時間停止して再試行します…", flush=True)
                 time.sleep(3600)  # 3600秒 = 1時間
             else:
                 raise
