@@ -347,11 +347,11 @@ async def quest_post(
     # === 任意（required=False）===
     場所: discord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", required=False, default=None),
     募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", required=False, default=""),
-    VC_作成: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", required=False, default=False),
-    VC_名称: discord.Option(str, description="作成するVCの名前（未指定なら自動）", required=False, default=""),
-    VC_人数上限: discord.Option(int, description="VCの人数上限（1〜99）", required=False, default=0),
-    VC_プライベート: discord.Option(bool, description="一般には見せず入室制にする", required=False, default=True),
-    VC_パスワード: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", required=False, default="")
+    ボイスルーム_作成: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", required=False, default=False),
+    ボイスルーム_名称: discord.Option(str, description="作成するVCの名前（未指定なら自動）", required=False, default=""),
+    ボイスルーム_人数上限: discord.Option(int, description="VCの人数上限（1〜99）", required=False, default=0),
+    ボイスルーム_プライベート: discord.Option(bool, description="一般には見せず入室制にする", required=False, default=True),
+    ボイスルーム_パスワード: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", required=False, default="")
 ):
     await ctx.defer()
 
@@ -365,31 +365,31 @@ async def quest_post(
     used_vc = 場所  # 既存VCが指定されたらそれを使う
 
     # ---- VC自動作成 ----
-    if vc_create:
+    if ボイスルーム_作成:
         parent_category = ctx.channel.category
 
         overwrites = {}
-        if vc_private or vc_passcode:
+        if ボイスルーム_プライベート or ボイスルーム_パスワード:
             # みんなは接続不可
             overwrites[ctx.guild.default_role] = discord.PermissionOverwrite(view_channel=False, connect=False)
             # 発起人は入れる
             overwrites[ctx.author] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True)
 
         # VC名
-        name = vc_name.strip() if vc_name.strip() else f"募集VC：{ctx.author.name}"
+        name = ボイスルーム_名称.strip() if ボイスルーム_名称.strip() else f"募集VC：{ctx.author.name}"
 
         created_vc = await ctx.guild.create_voice_channel(
             name=name,
             category=parent_category,
             overwrites=overwrites or None,
-            user_limit=(vc_limit if 1 <= vc_limit <= 99 else None),
+            user_limit=(ボイスルーム_人数上限 if 1 <= ボイスルーム_人数上限 <= 99 else None),
             reason=f"{ctx.author} の募集に合わせてBotが作成"
         )
         used_vc = created_vc
 
         # パスコード接続を有効化（保持）
-        if vc_passcode.strip():
-            VC_PASSCODES[vc_passcode.strip()] = created_vc.id
+        if ボイスルーム_パスワード.strip():
+            VC_PASSCODES[ボイスルーム_パスワード.strip()] = created_vc.id
 
     # ---- 埋め込みにVC情報反映 ----
     if used_vc:
@@ -420,10 +420,10 @@ async def quest_post(
         THREAD_TO_VC[thread.id] = created_vc.id
 
         # パスコード案内
-        if vc_passcode.strip():
+        if ボイスルーム_パスワード.strip():
             await thread.send(
                 f"🔐 このVCはパスコード制です。\n"
-                f"入室したい方は `/vc入室 code:{vc_passcode.strip()}` を実行してください。\n"
+                f"入室したい方は `/vc入室 code:{ボイスルーム_パスワード.strip()}` を実行してください。\n"
                 f"（実行した人だけ、このVCへの接続許可が自動で付きます）"
             )
 
