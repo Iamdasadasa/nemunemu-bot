@@ -123,6 +123,8 @@ VC_CATEGORY_ID = int(os.getenv("VC_CATEGORY_ID", "0"))
 REPRESENTATIVE_COUNCIL_CHANNEL_ID = int(os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID"))
 GUIDE_CHANNEL_ID = 1389290096498315364
 
+ADMIN_LOG_CHANNEL_ID = int(os.getenv("ADMIN_LOG_CHANNEL_ID", "0"))
+
 # --- Flaskエンドポイント ---
 @app.route("/")
 def home():
@@ -742,74 +744,54 @@ async def on_thread_update(before: discord.Thread, after: discord.Thread):
                     if _vc == vc_id:
                         VC_PASSCODES.pop(code, None)
 
-# --- 日次クリーンアップタスク ---
-@tasks.loop(time=dtime(hour=8, minute=0, tzinfo=JST))
-async def daily_cleanup_vcs():
-    """
-    毎朝 08:00(JST) に、Botが作成し TEMP_VCS に記録されている一時VCのみを削除。
-    あわせて VC_PASSCODES / THREAD_TO_VC の関連エントリも個別に掃除する。
-    結果は代表会議チャンネル（REPRESENTATIVE_COUNCIL_CHANNEL_ID）にサマリを出力（取得できない場合は print）。
-    """
-    start_count = len(TEMP_VCS)
-    removed_channels = 0
-    errors = 0
-    not_found = 0
+# --- 管理者: 日次クリーンアップ即時実行コマンド ---
+@bot.slash_command(
+    name="299_日次クリーン実行",
+    description="Bot作成の一時VCを即時クリーン（管理者専用）",
+    default_member_permissions=discord.Permissions(administrator=True),
+    dm_permission=False
+)
+async def daily_cleanup_now(ctx):
+    # パーミッション確認（念のため）
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
+        return
 
-    # --- 対象VCを走査（コピーしてから操作）
+    await ctx.defer(ephemeral=True)
+
+    deleted = 0
+    failed = 0
+
+    # TEMP_VCS に記録されているVCだけを対象に削除
     for vc_id in list(TEMP_VCS.keys()):
-        ch = bot.get_channel(vc_id)
-        if ch is None or not isinstance(ch, discord.VoiceChannel):
-            # 念のため全ギルドからも探索
-            for guild in bot.guilds:
-                _ch = guild.get_channel(vc_id)
-                if _ch and isinstance(_ch, discord.VoiceChannel):
-                    ch = _ch
-                    break
-
-        if ch and isinstance(ch, discord.VoiceChannel):
-            try:
-                await ch.delete(reason="日次クリーンアップ（Bot作成VC）")
-                removed_channels += 1
-            except Exception:
-                errors += 1
-        else:
-            not_found += 1
-
-        # --- メタ掃除（VCごと）
+        for guild in bot.guilds:
+            ch = guild.get_channel(vc_id)
+            if ch and isinstance(ch, discord.VoiceChannel):
+                try:
+                    await ch.delete(reason="手動クリーンアップ（管理者実行）")
+                    deleted += 1
+                except Exception:
+                    failed += 1
+        # メタ情報を掃除
         TEMP_VCS.pop(vc_id, None)
 
-        # スレッド逆引きの掃除
-        for th_id, v_id in list(THREAD_TO_VC.items()):
-            if v_id == vc_id:
-                THREAD_TO_VC.pop(th_id, None)
+    # パスコード・紐付けもリセット
+    VC_PASSCODES.clear()
+    THREAD_TO_VC.clear()
 
-        # パスコード紐付けの掃除
-        for code, v_id in list(VC_PASSCODES.items()):
-            if v_id == vc_id:
-                VC_PASSCODES.pop(code, None)
+    summary = f"🧹 手動クリーン完了: 削除 {deleted} 件 / 失敗 {failed} 件\nパスコードとスレッド紐付けも初期化しました。"
+    await ctx.respond(summary, ephemeral=True)
 
-    # --- サマリを管理者チャンネルへ
-    summary = (
-        "🧹 **日次クリーンアップ結果**\n"
-        f"- 対象（開始時点）: {start_count} 件\n"
-        f"- 削除成功: {removed_channels} 件\n"
-        f"- 見つからずメタのみ削除: {not_found} 件\n"
-        f"- エラー: {errors} 件"
-    )
+    # 管理者ログチャンネルが設定されていれば投下
+    if ADMIN_LOG_CHANNEL_ID:
+        for guild in bot.guilds:
+            log_ch = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if log_ch:
+                try:
+                    await log_ch.send(summary)
+                except Exception:
+                    pass
 
-    # ログ出力先の取得（どのギルドにも同一IDがある想定なら bot.get_channel でOK）
-    log_ch = bot.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
-    if log_ch and isinstance(log_ch, (discord.TextChannel, discord.Thread)):
-        try:
-            await log_ch.send(summary)
-        except Exception:
-            print(summary, flush=True)
-    else:
-        print(summary, flush=True)
-
-@daily_cleanup_vcs.before_loop
-async def before_cleanup():
-    await bot.wait_until_ready()
 
 # --- 手動クリーンアップ（管理者専用・即時実行） ---
 @bot.slash_command(
