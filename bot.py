@@ -334,23 +334,24 @@ async def upcoming(ctx):
 # --- クエスト募集スラッシュコマンド ---
 @bot.slash_command(name="狩り募集", description="クエスト募集メッセージを投稿します（必要ならVCも同時作成）")
 async def quest_post(
-    # ← 必須オプション
-    時間: discord.Option(str, description="集合・出発時間を入力（例: 21時～）"),
+    # === 必須（required=True）===
+    時間: discord.Option(str, description="集合・出発時間を入力（例: 21時～）", required=True),
     募集テンプレ内容: discord.Option(
         str,
         description="よくある募集内容から選んでね（カスタムがあれば優先）",
-        choices=["バウンティ消化", "クエストお手伝い", "HR上げ", "素材集め", "金策", "写真撮りたい！", "募集カスタムに記載"]
+        choices=["バウンティ消化", "クエストお手伝い", "HR上げ", "素材集め", "金策", "写真撮りたい！", "募集カスタムに記載"],
+        required=True
     ),
-    人数: discord.Option(str, description="募集人数（例: 4人, 5名）"),
+    人数: discord.Option(str, description="募集人数（例: 4人, 5名）", required=True),
 
-    # ← 任意オプション（default あり）
-    場所: discord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", default=None),
-    募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", default=""),
-    vc_create: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", default=False),
-    vc_name: discord.Option(str, description="作成するVCの名前（未指定なら自動）", default=""),
-    vc_limit: discord.Option(int, description="VCの人数上限（1〜99）", default=0),
-    vc_private: discord.Option(bool, description="一般には見せず入室制にする", default=True),
-    vc_passcode: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", default="")
+    # === 任意（required=False）===
+    場所: discord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", required=False, default=None),
+    募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", required=False, default=""),
+    vc_create: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", required=False, default=False),
+    vc_name: discord.Option(str, description="作成するVCの名前（未指定なら自動）", required=False, default=""),
+    vc_limit: discord.Option(int, description="VCの人数上限（1〜99）", required=False, default=0),
+    vc_private: discord.Option(bool, description="一般には見せず入室制にする", required=False, default=True),
+    vc_passcode: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", required=False, default="")
 ):
     await ctx.defer()
 
