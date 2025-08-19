@@ -5,35 +5,13 @@ import threading
 import discord
 from bs4 import BeautifulSoup
 from flask import Flask, request
-from discord.ext import commands
+from discord.ext import commands, tasks
+from datetime import time as dtime, timedelta, timezone
 from discord import option
 import google.generativeai as genai
 import tweepy
 import asyncio
 import time
-import sys
-import aiohttp
-
-import logging
-import base64
-
-# discord.py/py-cord のバージョン差異に対応したロギング設定
-try:
-    from discord.utils import setup_logging as _setup_logging  # discord.py 2.3+
-    def setup_discord_logging():
-        _setup_logging(level=logging.DEBUG)
-        logging.getLogger("discord.gateway").setLevel(logging.DEBUG)
-        logging.getLogger("discord.http").setLevel(logging.DEBUG)
-except Exception:
-    def setup_discord_logging():
-        # 古いpy-cordなど setup_logging が無い場合のフォールバック
-        logging.basicConfig(level=logging.DEBUG)
-        logging.getLogger("discord").setLevel(logging.DEBUG)
-        logging.getLogger("discord.gateway").setLevel(logging.DEBUG)
-        logging.getLogger("discord.http").setLevel(logging.DEBUG)
-
-# ログ設定を適用（Bot生成前に実行）
-setup_discord_logging()
 
 # --- Discord共通設定 ---
 intents = discord.Intents.default()
@@ -41,31 +19,7 @@ intents.message_content = True
 intents.members = True
 intents.reactions = True
 bot = discord.Bot(intents=intents)
-
-TOKEN = (os.getenv("TOKEN") or "").strip()
-if not TOKEN or len(TOKEN) < 50:
-    sys.exit("ENV TOKEN が未設定か不正です。RenderのEnvironmentで TOKEN に **生トークン**（先頭に 'Bot ' を付けない）を設定してください。")
-print(f"[DEBUG] Loaded TOKEN length={len(TOKEN)} preview={TOKEN[:4]}...{TOKEN[-4:] if len(TOKEN) >= 8 else ''}")
-
-
-# 追加: トークンの安全なダンプ（不可視文字とBot IDの検証用）
-def _debug_token_snapshot(tok: str):
-    # reprで改行/制御文字の混入を可視化（全体は出さない）
-    print(f"[DEBUG] TOKEN repr={tok!r}")
-    hidden = [c for c in tok if ord(c) < 32 or ord(c) == 127]
-    if hidden:
-        hexes = ' '.join(f"{ord(c):02x}" for c in hidden)
-        print(f"[DEBUG] TOKEN contains control chars (hex): {hexes}")
-    # 先頭パートをBase64デコードしてBot IDを確認
-    try:
-        head = tok.split(".")[0]
-        pad = "=" * (-len(head) % 4)
-        decoded = base64.urlsafe_b64decode((head + pad).encode()).decode(errors="replace")
-        print(f"[DEBUG] Decoded Bot ID from token head: {decoded}")
-    except Exception as e:
-        print(f"[DEBUG] Token head decode error: {e}")
-
-_debug_token_snapshot(TOKEN)
+TOKEN = os.getenv("TOKEN")
 
 # --- Flaskアプリ ---
 app = Flask(__name__)
@@ -73,11 +27,8 @@ app = Flask(__name__)
 # --- Gemini 設定 ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 PROMPT = os.getenv("PROMPT_TEXT", "")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
-else:
-    model = None  # キー未設定時は使わない
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
 
 # --- X (Twitter API) 認証 ---
 client = tweepy.Client(
@@ -88,7 +39,6 @@ client = tweepy.Client(
 )
 
 # --- 環境変数系 ---
-
 HASHTAGS = """
 #モンハンワイルズ
 #モンハン
@@ -98,53 +48,24 @@ HASHTAGS = """
 #モンハンワイルズ募集
 """
 
-# 武器一覧（Render の環境変数 WEAPON_LIST に格納：カンマ or 改行区切り）
-WEAPON_LIST_RAW = os.getenv("WEAPON_LIST", "")
-
-def _parse_env_list(raw: str):
-    # カンマ/改行/セミコロン区切りに対応
-    if not raw:
-        return []
-    parts = []
-    for sep in ["\n", ",", ";"]:
-        if sep in raw:
-            for p in raw.split(sep):
-                parts.append(p.strip())
-            raw = "\n".join(parts)  # 次の周回のために一旦結合（重複除去は後で）
-            parts = []
-    # 最後の結合結果から空白行を除去
-    items = [s.strip() for s in raw.replace(";", "\n").replace(",", "\n").split("\n")]
-    # 空要素除去 & 重複排除（順序保持）
-    seen = set()
-    result = []
-    for s in items:
-        if s and s not in seen:
-            seen.add(s)
-            result.append(s)
-    return result
-
-# 既定（環境変数が未設定の場合のフォールバック）
-_DEFAULT_WEAPONS = [
-    "大剣", "太刀", "片手剣", "双剣", "ハンマー", "狩猟笛",
-    "ランス", "ガンランス", "スラッシュアックス", "チャージアックス",
-    "操虫棍", "ライトボウガン", "ヘビィボウガン", "弓"
-]
-
-WEAPONS = _parse_env_list(WEAPON_LIST_RAW) or _DEFAULT_WEAPONS
-
 # リアクション対象メッセージを記録する辞書
 guide_messages = {}  # {user_id: message_id}
+
+# ---- VC 管理用の一時ストア ----
+JST = timezone(timedelta(hours=9))
+# Botが作った一時VCの記録: {vc_id: {"owner_id": int, "thread_id": int, "created_at": datetime}}
+TEMP_VCS: dict[int, dict] = {}
+# スレッドID→VCID 逆引き
+THREAD_TO_VC: dict[int, int] = {}
+# パスコード→VCID（シンプル版：コードは平文でメモリ保持）
+VC_PASSCODES: dict[str, int] = {}
 
 # ロールID（設定済みかもだけど確認）
 ROLE_FIRST_TIMER = 1390261208782868590  # 初めてロール
 ROLE_GENERAL = 1390261772853837907      # 一般ロール ←適切なIDに変えて
 
 WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")
-try:
-    REPRESENTATIVE_COUNCIL_CHANNEL_ID = int(os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID", "0") or "0")
-except ValueError:
-    REPRESENTATIVE_COUNCIL_CHANNEL_ID = 0
-    print("⚠️ REPRESENTATIVE_COUNCIL_CHANNEL_ID が数値でありません。ログ用チャンネル通知は無効化されます。")
+REPRESENTATIVE_COUNCIL_CHANNEL_ID = int(os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID"))
 GUIDE_CHANNEL_ID = 1389290096498315364
 
 # --- Flaskエンドポイント ---
@@ -157,8 +78,6 @@ def webhook_handler():
     if not PROMPT:
         return "❌ PROMPT_TEXT の環境変数が設定されていません。", 500
     try:
-        if model is None:
-            return "❌ GEMINI_API_KEY が未設定のため、このエンドポイントは使用できません。", 500
         response = model.generate_content(PROMPT)
         result = response.text.strip()
         tweet = f"{result}\n{HASHTAGS.strip()}"
@@ -192,8 +111,6 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 threading.Thread(target=run_flask, daemon=True).start()
-print(f"[BOOT] discord.py/py-cord version: {getattr(discord, '__version__', 'unknown')}")
-print("[BOOT] Flask thread開始。Bot起動に進みます…")
 
 # --- 新規メンバー時の処理 ---
 @bot.event
@@ -204,10 +121,10 @@ async def on_member_join(member):
     guide_channel = guild.get_channel(GUIDE_CHANNEL_ID)
 
     if log_channel:
+        mention_link = f"<@{member.id}>"  # メンションリンク（通知なし）
         await log_channel.send(
-            f"管理メンバーの皆さま、お手数ですが新たに\n{member.mention}\nさんがサーバーに参加されました。\n"
-            "よろしくお願いいたします。",
-            allowed_mentions=discord.AllowedMentions.none()
+            f"管理メンバーの皆さま、お手数ですが新たに\n\\{mention_link}\nさんがサーバーに参加されました。\n"
+            "よろしくお願いいたします。"
         )
 
     if role:
@@ -289,36 +206,19 @@ async def on_raw_reaction_add(payload):
 # --- モンスター関連コマンド ---
 def fetch_monsters():
     url = "https://gamewith.jp/mhwilds/452222"
-    try:
-        res = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; nemunemuBot/1.0)"},
-            timeout=10
-        )
-        res.raise_for_status()
-        soup = BeautifulSoup(res.content, "html.parser")
-        return [li.get("data-name", "").strip() for li in soup.select("ol.monster_weak_list li[data-name]") if li.get("data-name")]
-    except Exception as e:
-        print(f"⚠️ fetch_monsters失敗: {e}")
-        return []
+    res = requests.get(url)
+    soup = BeautifulSoup(res.content, "html.parser")
+    return [li.get("data-name", "").strip() for li in soup.select("ol.monster_weak_list li[data-name]") if li.get("data-name")]
 
-MONSTERS = []
-
-def _warmup_monsters():
-    global MONSTERS
-    MONSTERS = fetch_monsters()
-    print(f"[WARMUP] MONSTERS 読込: {len(MONSTERS)} 件")
-
-threading.Thread(target=_warmup_monsters, daemon=True).start()
+MONSTERS = fetch_monsters()
 
 @bot.slash_command(name="モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
 async def monster(ctx):
-    if not MONSTERS:
-        await ctx.respond("⚠️ モンスターリストを読み込み中か取得に失敗しました。少し待って /モンスターリスト更新 を試してください。", ephemeral=True)
-        return
-    name = random.choice(MONSTERS)
-    await ctx.respond(f"あなたのモンスターは… 🐲 **{name}** だ！")
-
+    if MONSTERS:
+        name = random.choice(MONSTERS)
+        await ctx.respond(f"あなたのモンスターは… 🐲 **{name}** だ！")
+    else:
+        await ctx.respond("モンスターが見つからなかったよ😢")
 
 @bot.slash_command(name="モンスターリスト更新", description="モンスターリストを更新するよ")
 async def update_monsters(ctx):
@@ -326,65 +226,6 @@ async def update_monsters(ctx):
     global MONSTERS
     MONSTERS = fetch_monsters()
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
-
-
-# --- 武器抽選コマンド（環境変数ベース） ---
-@bot.slash_command(name="武器抽選", description="武器一覧からランダムに選びます")
-async def weapon_draw(
-    ctx,
-    数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
-    重複許可: discord.Option(bool, description="同じ武器が複数回出てもよい", required=False, default=False)
-):
-    if not WEAPONS:
-        await ctx.respond(
-            "❌ 武器一覧が空です。Renderの環境変数 `WEAPON_LIST` に武器名をカンマまたは改行で設定してください。\n"
-            "例: 大剣, 太刀, 片手剣\n再デプロイ後にお試しください。",
-            ephemeral=True
-        )
-        return
-
-    if 数 < 1:
-        await ctx.respond("抽選個数は1以上にしてね❌", ephemeral=True)
-        return
-
-    if 重複許可:
-        picks = [random.choice(WEAPONS) for _ in range(数)]
-    else:
-        if 数 > len(WEAPONS):
-            await ctx.respond(f"重複なしでは最大 {len(WEAPONS)} 個までです❌", ephemeral=True)
-            return
-        picks = random.sample(WEAPONS, k=数)
-
-    if len(picks) == 1:
-        await ctx.respond(f"🎲 本日の武器は… **{picks[0]}**！")
-    else:
-        lines = "\n".join([f"- {w}" for w in picks])
-        await ctx.respond(f"🎲 抽選結果 ({数}件)\n{lines}")
-
-
-@bot.slash_command(
-    name="武器リロード",
-    description="武器一覧を再読み込みします（管理者専用）",
-    default_member_permissions=discord.Permissions(administrator=True),
-    dm_permission=False
-)
-async def weapon_reload(ctx):
-    # パーミッションチェック（管理者のみ）
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
-        return
-
-    global WEAPONS
-    new_raw = os.getenv("WEAPON_LIST", "")
-    new_list = _parse_env_list(new_raw)
-    WEAPONS = new_list or _DEFAULT_WEAPONS
-    # Render の環境変数変更は再デプロイ後に反映される点も案内
-    await ctx.respond(
-        "🔄 武器一覧を再読み込みしました。\n"
-        f"現在の登録数: {len(WEAPONS)} 件\n"
-        "※ Renderでは環境変数の変更は通常、再デプロイ後に反映されます。",
-        ephemeral=True
-    )
 
 @bot.slash_command(name="メンバー分け", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
@@ -417,59 +258,50 @@ async def party(ctx, size: int = 4):
 # --- イベント取得系 ---
 EVENT_URL = "https://gamewith.jp/mhwilds/484117"
 def fetch_events():
-    try:
-        res = requests.get(
-            EVENT_URL,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; nemunemuBot/1.0)"},
-            timeout=10
-        )
-        res.raise_for_status()
-        soup = BeautifulSoup(res.content, "html.parser")
-        items = soup.find_all("div", class_="_item")
-        current_events, upcoming_events = [], []
-        for item in items:
-            head = item.find("div", class_="_head")
-            title_tag = head.find("a") if head else None
-            held_div = head.find("div", class_="_held") if head else None
-            if not title_tag: continue
-            name = title_tag.text.strip()
-            link = title_tag["href"]
-            status = held_div.text.strip() if held_div else "不明"
-            body = item.find("div", class_="_body")
-            if not body: continue
-            info = body.find("div", class_="_info")
-            if not info: continue
-            labels = info.find_all("div", class_="_label-9")
-            all_divs = info.find_all("div")
-            values = []
-            skip_next = False
-            for i, div in enumerate(all_divs):
-                if skip_next:
-                    skip_next = False
-                    continue
-                if div in labels:
-                    if i + 1 < len(all_divs):
-                        values.append(all_divs[i + 1])
-                        skip_next = True
-            event_info = {"タイトル": name, "URL": link}
-            for label, value in zip(labels, values):
-                key = label.text.strip()
-                val = value.get_text(separator="\n", strip=True)
-                event_info[key] = val
-            if "開催中" in status:
-                current_events.append(event_info)
-            elif "開催予定" in status:
-                upcoming_events.append(event_info)
-        return current_events, upcoming_events
-    except Exception as e:
-        print(f"⚠️ fetch_events失敗: {e}")
-        return [], []
+    res = requests.get(EVENT_URL)
+    soup = BeautifulSoup(res.content, "html.parser")
+    items = soup.find_all("div", class_="_item")
+    current_events, upcoming_events = [], []
+    for item in items:
+        head = item.find("div", class_="_head")
+        title_tag = head.find("a") if head else None
+        held_div = head.find("div", class_="_held") if head else None
+        if not title_tag: continue
+        name = title_tag.text.strip()
+        link = title_tag["href"]
+        status = held_div.text.strip() if held_div else "不明"
+        body = item.find("div", class_="_body")
+        if not body: continue
+        info = body.find("div", class_="_info")
+        if not info: continue
+        labels = info.find_all("div", class_="_label-9")
+        all_divs = info.find_all("div")
+        values = []
+        skip_next = False
+        for i, div in enumerate(all_divs):
+            if skip_next:
+                skip_next = False
+                continue
+            if div in labels:
+                if i + 1 < len(all_divs):
+                    values.append(all_divs[i + 1])
+                    skip_next = True
+        event_info = {"タイトル": name, "URL": link}
+        for label, value in zip(labels, values):
+            key = label.text.strip()
+            val = value.get_text(separator="\n", strip=True)
+            event_info[key] = val
+        if "開催中" in status:
+            current_events.append(event_info)
+        elif "開催予定" in status:
+            upcoming_events.append(event_info)
+    return current_events, upcoming_events
 
 @bot.slash_command(name="イベント開催中", description="現在開催中のイベント一覧を表示します")
 async def current(ctx):
     events, _ = fetch_events()
     if not events:
-        await ctx.respond("⚠️ 現在開催中のイベントは取得できませんでした。（サイト応答なし/形式変更の可能性）", ephemeral=True)
+        await ctx.respond("現在開催中のイベントは見つかりませんでした。")
         return
     for e in events:
         msg = (
@@ -486,7 +318,7 @@ async def current(ctx):
 async def upcoming(ctx):
     _, events = fetch_events()
     if not events:
-        await ctx.respond("⚠️ 開催予定イベントは取得できませんでした。（サイト応答なし/形式変更の可能性）", ephemeral=True)
+        await ctx.respond("開催予定のイベントは見つかりませんでした。")
         return
     for e in events:
         msg = (
@@ -499,195 +331,187 @@ async def upcoming(ctx):
         )
         await ctx.respond(msg)
 
-# 変更点サマリ
-# 1) 環境変数 AREA_LIST を新設し、エリア一覧を読み込む処理を追加
-# 2) /エリア抽選 と /エリアリロード（管理者専用・不可視）を追加
-# 3) 既存の _parse_env_list を流用
-
-# --- 追加: 環境変数読み込み（武器の直下あたりに配置） ---
-AREA_LIST_RAW = os.getenv("AREA_LIST", "")
-AREAS = _parse_env_list(AREA_LIST_RAW)  # 既定は設けず、未設定ならエラー表示
-
-# --- 追加: エリア抽選コマンド ---
-@bot.slash_command(name="エリア抽選", description="Renderの環境変数のエリア一覧からランダムに選びます")
-async def area_draw(
-    ctx,
-    数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
-    重複許可: discord.Option(bool, description="同じエリアが複数回出てもよい", required=False, default=False)
-):
-    if not AREAS:
-        await ctx.respond(
-            "❌ エリア一覧が空です。Renderの環境変数 `AREA_LIST` にエリア名をカンマまたは改行で設定してください。\n"
-            "例: 草原, 砂漠, 雪山\n再デプロイ後にお試しください。",
-            ephemeral=True
-        )
-        return
-
-    if 数 < 1:
-        await ctx.respond("抽選個数は1以上にしてね❌", ephemeral=True)
-        return
-
-    if 重複許可:
-        picks = [random.choice(AREAS) for _ in range(数)]
-    else:
-        if 数 > len(AREAS):
-            await ctx.respond(f"重複なしでは最大 {len(AREAS)} 個までです❌", ephemeral=True)
-            return
-        picks = random.sample(AREAS, k=数)
-
-    if len(picks) == 1:
-        await ctx.respond(f"🗺️ 本日のエリアは… **{picks[0]}**！")
-    else:
-        lines = "\n".join([f"- {a}" for a in picks])
-        await ctx.respond(f"🗺️ 抽選結果は ({数}件)\n{lines}")
-
-# --- 追加: エリアリロード（管理者のみ・可視性制限・DM不可） ---
-@bot.slash_command(
-    name="エリアリロード",
-    description="エリア一覧を再読み込みします（管理者専用）",
-    default_member_permissions=discord.Permissions(administrator=True),
-    dm_permission=False
-)
-async def area_reload(ctx):
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
-        return
-
-    global AREAS
-    new_raw = os.getenv("AREA_LIST", "")
-    new_list = _parse_env_list(new_raw)
-    AREAS = new_list  # 既定は無し（未設定なら空のまま）
-
-    await ctx.respond(
-        "🔄 エリア一覧を再読み込みしました。\n"
-        f"現在の登録数: {len(AREAS)} 件\n"
-        "※ Renderでは環境変数の変更は通常、再デプロイ後に反映されます。",
-        ephemeral=True
-    )
-
-
-
 # --- クエスト募集スラッシュコマンド ---
-@bot.slash_command(name="狩り募集", description="クエスト募集メッセージを投稿します")
+@bot.slash_command(name="狩り募集", description="クエスト募集メッセージを投稿します（必要ならVCも同時作成）")
 async def quest_post(
     ctx,
     時間: discord.Option(str, description="集合・出発時間を入力（例: 21時～）"),
     募集テンプレ内容: discord.Option(
         str,
-        description="よくある募集内容から選んでね（カスタム内容があればそちらが優先されます）",
-        choices=[
-            "バウンティ消化",
-            "クエストお手伝い",
-            "HR上げ",
-            "素材集め",
-            "金策",
-            "写真撮りたい！",
-            "募集カスタムに記載"
-        ]
+        description="よくある募集内容から選んでね（カスタムがあれば優先）",
+        choices=["バウンティ消化", "クエストお手伝い", "HR上げ", "素材集め", "金策", "写真撮りたい！", "募集カスタムに記載"]
     ),
-    場所: discord.Option(discord.VoiceChannel, description="VCチャンネルを選択"),
-    人数: discord.Option(str, description="募集人数や表現を自由に記載（例: 4人, 5名）"),
-    募集カスタム内容: discord.Option(str, description="自由入力で内容を上書きしたい場合はこちら", default=""),
-    一言: discord.Option(str, description="補足コメントなど（任意）", default="")
+    場所: discord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", default=None),
+    人数: discord.Option(str, description="募集人数（例: 4人, 5名）"),
+    募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", default=""),
+    # ここからVC作成オプション
+    VCを作成する: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", default=False),
+    VC名: discord.Option(str, description="作成するVCの名前（未指定なら自動）", default=""),
+    VC上限: discord.Option(int, description="VCの人数上限（1〜99）", default=0),
+    VCをプライベートにする: discord.Option(bool, description="一般には見せず入室制にする", default=True),
+    パスコード: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", default="")
 ):
+    await ctx.defer()
+
     内容 = 募集カスタム内容 if 募集カスタム内容 else 募集テンプレ内容
 
-    embed = discord.Embed(title=f"🎯 クエスト募集のお知らせ（by {ctx.author.mention}）", color=0x4CAF50)
-    embed.add_field(name="⏰ 時間", value=f"\n→ __{時間}__", inline=False)
-    embed.add_field(name="📝 内容", value=f"\n→ __{内容}__", inline=False)
-    embed.add_field(name="📍 場所", value=f"\n→ __{場所.name}__", inline=False)
-    embed.add_field(name="👥 人数", value=f"\n→ __{人数}__", inline=False)
-    if 一言:
-        embed.add_field(name="💬 一言", value=f"→ {一言}", inline=False)
+    embed = discord.Embed(title=f"🎯 クエスト募集（by {ctx.author.mention}）", color=0x4CAF50)
+    embed.add_field(name="⏰ 時間", value=f"→ __{時間}__", inline=False)
+    embed.add_field(name="📝 内容", value=f"→ __{内容}__", inline=False)
 
-    response = await ctx.respond(embed=embed)
-    original = await response.original_response()
+    created_vc = None
+    used_vc = 場所  # 既存VCが指定されたらそれを使う
 
-    # スレッドを作成（メッセージを親にする）
-    await original.create_thread(
+    # ---- VC自動作成 ----
+    if VCを作成する:
+        parent_category = ctx.channel.category
+
+        overwrites = {}
+        if VCをプライベートにする or パスコード:
+            # みんなは接続不可
+            overwrites[ctx.guild.default_role] = discord.PermissionOverwrite(view_channel=False, connect=False)
+            # 発起人は入れる
+            overwrites[ctx.author] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True)
+
+        # VC名
+        name = VC名.strip() if VC名.strip() else f"募集VC：{ctx.author.name}"
+
+        created_vc = await ctx.guild.create_voice_channel(
+            name=name,
+            category=parent_category,
+            overwrites=overwrites or None,
+            user_limit=(VC上限 if 1 <= VC上限 <= 99 else None),
+            reason=f"{ctx.author} の募集に合わせてBotが作成"
+        )
+        used_vc = created_vc
+
+        # パスコード接続を有効化（保持）
+        if パスコード.strip():
+            VC_PASSCODES[パスコード.strip()] = created_vc.id
+
+    # ---- 埋め込みにVC情報反映 ----
+    if used_vc:
+        embed.add_field(name="📍 場所", value=f"→ __{used_vc.name}__", inline=False)
+    else:
+        embed.add_field(name="📍 場所", value="→ __テキスト募集（VC指定なし）__", inline=False)
+
+    embed.add_field(name="👥 人数", value=f"→ __{人数}__", inline=False)
+    if 募集カスタム内容:
+        embed.add_field(name="💬 補足", value=f"→ {募集カスタム内容}", inline=False)
+
+    resp = await ctx.respond(embed=embed)
+    original_msg = await resp.original_response()
+
+    # 募集スレッドを作る
+    thread = await original_msg.create_thread(
         name=f"{ctx.author.name}の募集スレッド",
-        auto_archive_duration=60  # 1時間後に自動アーカイブ（15, 60, 1440, 4320 から選べる）
+        auto_archive_duration=60  # 1時間
     )
 
+    # VCとスレッドのひも付け（Bot作成VCのみ）
+    if created_vc:
+        TEMP_VCS[created_vc.id] = {
+            "owner_id": ctx.author.id,
+            "thread_id": thread.id,
+            "created_at": discord.utils.utcnow()
+        }
+        THREAD_TO_VC[thread.id] = created_vc.id
+
+        # パスコード案内
+        if パスコード.strip():
+            await thread.send(
+                f"🔐 このVCはパスコード制です。\n"
+                f"入室したい方は `/vc入室 code:{パスコード.strip()}` を実行してください。\n"
+                f"（実行した人だけ、このVCへの接続許可が自動で付きます）"
+            )
+
+@bot.slash_command(name="vc入室", description="パスコードを入力して、対象VCへの接続権限を付与します")
+async def vc_join(ctx, code: discord.Option(str, description="配布されたパスコード")):
+    vc_id = VC_PASSCODES.get(code.strip())
+    if not vc_id:
+        await ctx.respond("❌ パスコードが無効です。", ephemeral=True)
+        return
+
+    channel = ctx.guild.get_channel(vc_id)
+    if not channel or not isinstance(channel, discord.VoiceChannel):
+        await ctx.respond("❌ 対象のVCが見つかりません。", ephemeral=True)
+        return
+
+    try:
+        await channel.set_permissions(
+            ctx.author,
+            view_channel=True,
+            connect=True,
+            speak=True
+        )
+        await ctx.respond(f"✅ `{channel.name}` への入室権限を付与しました。", ephemeral=True)
+    except discord.Forbidden:
+        await ctx.respond("⚠️ 権限不足で許可を付与できませんでした。", ephemeral=True)
+
+@bot.event
+async def on_thread_update(before: discord.Thread, after: discord.Thread):
+    if before.archived is False and after.archived is True:
+        vc_id = THREAD_TO_VC.get(after.id)
+        if not vc_id:
+            return
+        channel = after.guild.get_channel(vc_id)
+        if channel and isinstance(channel, discord.VoiceChannel):
+            try:
+                await channel.delete(reason="募集スレッドのアーカイブに伴い自動削除")
+            finally:
+                TEMP_VCS.pop(vc_id, None)
+                THREAD_TO_VC.pop(after.id, None)
+                # パスコード紐付けも掃除
+                for code, _vc in list(VC_PASSCODES.items()):
+                    if _vc == vc_id:
+                        VC_PASSCODES.pop(code, None)
+
+# --- 日次クリーンアップタスク ---
+@tasks.loop(time=dtime(hour=8, minute=0, tzinfo=JST))
+async def daily_cleanup_vcs():
+    # 全ギルドを横断して、TEMP_VCSに記録されたチャンネルだけ削除
+    for vc_id in list(TEMP_VCS.keys()):
+        for guild in bot.guilds:
+            ch = guild.get_channel(vc_id)
+            if ch and isinstance(ch, discord.VoiceChannel):
+                try:
+                    await ch.delete(reason="日次クリーンアップ（Bot作成VC）")
+                except Exception:
+                    pass
+        TEMP_VCS.pop(vc_id, None)
+
+    # パスコードも全消し
+    VC_PASSCODES.clear()
+    THREAD_TO_VC.clear()
+
+@daily_cleanup_vcs.before_loop
+async def before_cleanup():
+    await bot.wait_until_ready()
+
 # --- スラッシュコマンドはここより上へ！ ---
-
-# ゲートウェイ状態イベントのログを追加
-@bot.event
-async def on_connect():
-    print("[GATEWAY] on_connect (ソケット接続は確立)")
-
-@bot.event
-async def on_resumed():
-    print("[GATEWAY] on_resumed (セッション再開)")
-
-@bot.event
-async def on_disconnect():
-    print("[GATEWAY] on_disconnect (切断)")
-
 @bot.event
 async def on_ready():
     try:
         print("✅ on_ready() に入りました！")
         print(f"✅ ログインユーザー: {bot.user} (ID: {bot.user.id})")
-        print("🔄 スラッシュコマンド同期を開始（py-cord）…")
-        synced = await bot.sync_commands()
-        print(f"✅ スラッシュコマンドの同期に成功しました (py-cord) count={len(synced)}")
-        print("✅ Botはオンライン（緑）になるはずです。サーバーのメンバーリストで確認してください。")
+        await bot.sync_commands()
+        print("✅ スラッシュコマンドの同期に成功しました")
+        if not daily_cleanup_vcs.is_running():
+            daily_cleanup_vcs.start()
     except Exception as e:
         import traceback
         print(f"❌ on_ready() 内でエラー発生: {e}")
         traceback.print_exc()
 
-
-
-# --- 同期プリフライトチェック（requests + Retry-After尊重） ---
-def preflight_check_sync(token: str):
-    url = "https://discord.com/api/v10/users/@me"
-    headers = {
-        "Authorization": f"Bot {token}",
-        "User-Agent": "nemunemuBot/1.0 (+render)",
-    }
-    backoff = 30
-    max_backoff = 300
+# --- 起動処理 ---
+if __name__ == "__main__":
     while True:
         try:
-            print(f"[PREFLIGHT] sending GET {url} ...")
-            r = requests.get(url, headers=headers, timeout=10)
-            status = r.status_code
-            retry_after = r.headers.get("Retry-After") or r.headers.get("retry-after")
-            date_hdr = r.headers.get("Date")
-            cf_hdr = r.headers.get("CF-RAY") or r.headers.get("CF-Ray")
-            body_head = (r.text or "")[:120]
-            print(f"[PREFLIGHT] status={status} retry_after={retry_after} date={date_hdr} cf={cf_hdr}")
-            print(f"[PREFLIGHT] body_head={body_head!r}")
-            if status == 200:
-                print("[PREFLIGHT] Discord token is valid.")
-                return
-            if status == 401:
-                print("❌ ボットトークンが無効（401）。TOKEN を再確認してください（生トークン／'Bot ' なし・前後スペースなし）。")
-                sys.exit(1)
-            # 429/403/5xx は待機して再試行
-            wait = None
-            try:
-                if retry_after is not None:
-                    wait = int(float(retry_after))
-            except Exception:
-                wait = None
-            if not wait:
-                wait = backoff
-                backoff = min(backoff * 2, max_backoff)
-            print(f"[PREFLIGHT] non-fatal status {status} → {wait}s 待機して再試行")
-            time.sleep(wait)
-        except requests.exceptions.Timeout:
-            print("[PREFLIGHT] timeout (10s) → 30s 後に再試行")
-            time.sleep(30)
-        except requests.exceptions.RequestException as e:
-            print(f"[PREFLIGHT] request error: {e} → 30s 後に再試行")
-            time.sleep(30)
-
-print("[TRACE] about to enter __main__ block check")
-if __name__ == "__main__":
-    print("[TRACE] __main__ confirmed; running sync preflight then bot.run()")
-    preflight_check_sync(TOKEN)
-    print("[BOOT] bot.run() を開始します…")
-    bot.run(TOKEN)
+            bot.run(TOKEN)
+            break  # 正常終了したらループ抜ける（必要に応じて）
+        except discord.HTTPException as e:
+            if "429" in str(e) or "Too Many Requests" in str(e):
+                print("❌ 429 Too Many Requests 発生。1時間停止して再試行します…")
+                time.sleep(3600)  # 3600秒 = 1時間
+            else:
+                raise
