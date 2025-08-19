@@ -20,12 +20,6 @@ intents.message_content = True
 intents.members = True
 intents.reactions = True
 bot = discord.Bot(intents=intents)
-便利 = discord.SlashCommandGroup("便利", "便利ツール系")
-募集 = discord.SlashCommandGroup("募集", "募集/VC関連")
-攻略 = discord.SlashCommandGroup("攻略", "イベント・攻略情報")
-bot.add_application_command(便利)
-bot.add_application_command(募集)
-bot.add_application_command(攻略)
 TOKEN = os.getenv("TOKEN")
 
 # --- Flaskアプリ ---
@@ -245,7 +239,7 @@ def fetch_monsters():
 
 MONSTERS = fetch_monsters()
 
-@便利.command(name="モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
+@bot.slash_command(name="203_モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
 async def monster(ctx):
     if MONSTERS:
         name = random.choice(MONSTERS)
@@ -253,7 +247,7 @@ async def monster(ctx):
     else:
         await ctx.respond("モンスターが見つからなかったよ😢")
 
-@便利.command(name="モンスターリスト更新", description="モンスターリストを更新するよ")
+@bot.slash_command(name="202_モンスターリスト更新", description="モンスターリストを更新するよ")
 async def update_monsters(ctx):
     await ctx.respond("🔄 モンスターリストを更新中…")
     global MONSTERS
@@ -261,7 +255,7 @@ async def update_monsters(ctx):
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
 
 
-@便利.command(name="メンバー分け", description="参加リアクションからランダムにパーティを編成するよ！")
+@bot.slash_command(name="201_メンバー分け", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
     if size < 1:
         await ctx.respond("パーティ人数は1人以上にしてね❌", ephemeral=True)
@@ -290,7 +284,7 @@ async def party(ctx, size: int = 4):
     await ctx.followup.send(f"✅ パーティ編成完了！\n{result}")
 
 # --- エリア抽選（便利ツール系） ---
-@便利.command(name="エリア抽選", description="環境変数 AREA_LIST からエリアをランダム抽選します")
+@bot.slash_command(name="205_エリア抽選", description="環境変数 AREA_LIST からエリアをランダム抽選します")
 async def area_draw(
     ctx,
     数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
@@ -323,8 +317,8 @@ async def area_draw(
         await ctx.respond(f"🗺️ 抽選結果 ({数}件)\n{lines}")
 
 # --- エリアリロード（管理者専用） ---
-@便利.command(
-    name="エリアリロード",
+@bot.slash_command(
+    name="299_エリアリロード",
     description="エリア一覧を再読み込みします（管理者専用）",
     default_member_permissions=discord.Permissions(administrator=True),
     dm_permission=False
@@ -346,7 +340,7 @@ async def area_reload(ctx):
     )
 
 # --- 武器抽選（便利ツール系） ---
-@便利.command(name="武器抽選", description="武器一覧からランダムに選びます")
+@bot.slash_command(name="204_武器抽選", description="武器一覧からランダムに選びます")
 async def weapon_draw(
     ctx,
     数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
@@ -379,8 +373,8 @@ async def weapon_draw(
         await ctx.respond(f"🎲 抽選結果 ({数}件)\n{lines}")
 
 # --- 武器リロード（管理者専用） ---
-@便利.command(
-    name="武器リロード",
+@bot.slash_command(
+    name="299_武器リロード",
     description="武器一覧を再読み込みします（管理者専用）",
     default_member_permissions=discord.Permissions(administrator=True),
     dm_permission=False
@@ -443,7 +437,7 @@ def fetch_events():
             upcoming_events.append(event_info)
     return current_events, upcoming_events
 
-@攻略.command(name="イベント開催中", description="現在開催中のイベント一覧を表示します")
+@bot.slash_command(name="301_イベント開催中", description="現在開催中のイベント一覧を表示します")
 async def current(ctx):
     events, _ = fetch_events()
     if not events:
@@ -460,7 +454,7 @@ async def current(ctx):
         )
         await ctx.respond(msg)
 
-@攻略.command(name="イベント開催予定", description="今後開催予定のイベント一覧を表示します")
+@bot.slash_command(name="302_イベント開催予定", description="今後開催予定のイベント一覧を表示します")
 async def upcoming(ctx):
     _, events = fetch_events()
     if not events:
@@ -478,7 +472,7 @@ async def upcoming(ctx):
         await ctx.respond(msg)
 
 # --- クエスト募集スラッシュコマンド ---
-@募集.command(name="狩り募集", description="クエスト募集メッセージを投稿します（必要ならVCも同時作成）")
+@bot.slash_command(name="101_狩り募集", description="クエスト募集メッセージを投稿します（必要ならVCも同時作成）")
 async def quest_post(
     ctx,
     # === 必須（required=True）===
@@ -581,11 +575,11 @@ async def quest_post(
         if ボイスルーム_パスワード.strip():
             await thread.send(
                 f"🔐 このVCはパスコード制です。\n"
-                f"入室したい方は `/vc入室 code:{ボイスルーム_パスワード.strip()}` を実行してください。\n"
+                f"入室したい方は `/102_vc入室 code:{ボイスルーム_パスワード.strip()}` を実行してください。\n"
                 f"（実行した人だけ、このVCへの接続許可が自動で付きます）"
             )
 
-@募集.command(name="パスワード付きボイスルーム入室", description="パスコードを入力して、対象VCへの接続権限を付与します")
+@bot.slash_command(name="102_vc入室", description="パスコードを入力して、対象VCへの接続権限を付与します")
 async def vc_join(ctx, code: discord.Option(str, description="配布されたパスコード")):
     vc_id = VC_PASSCODES.get(code.strip())
     if not vc_id:
