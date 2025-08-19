@@ -345,11 +345,11 @@ async def quest_post(
     人数: discord.Option(str, description="募集人数（例: 4人, 5名）"),
     募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", default=""),
     # ここからVC作成オプション
-    VCを作成する: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", default=False),
-    VC名: discord.Option(str, description="作成するVCの名前（未指定なら自動）", default=""),
-    VC上限: discord.Option(int, description="VCの人数上限（1〜99）", default=0),
-    VCをプライベートにする: discord.Option(bool, description="一般には見せず入室制にする", default=True),
-    パスコード: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", default="")
+    vc_create: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", default=False),
+    vc_name: discord.Option(str, description="作成するVCの名前（未指定なら自動）", default=""),
+    vc_limit: discord.Option(int, description="VCの人数上限（1〜99）", default=0),
+    vc_private: discord.Option(bool, description="一般には見せず入室制にする", default=True),
+    vc_passcode: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", default="")
 ):
     await ctx.defer()
 
@@ -363,31 +363,31 @@ async def quest_post(
     used_vc = 場所  # 既存VCが指定されたらそれを使う
 
     # ---- VC自動作成 ----
-    if VCを作成する:
+    if vc_create:
         parent_category = ctx.channel.category
 
         overwrites = {}
-        if VCをプライベートにする or パスコード:
+        if vc_private or vc_passcode:
             # みんなは接続不可
             overwrites[ctx.guild.default_role] = discord.PermissionOverwrite(view_channel=False, connect=False)
             # 発起人は入れる
             overwrites[ctx.author] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True)
 
         # VC名
-        name = VC名.strip() if VC名.strip() else f"募集VC：{ctx.author.name}"
+        name = vc_name.strip() if vc_name.strip() else f"募集VC：{ctx.author.name}"
 
         created_vc = await ctx.guild.create_voice_channel(
             name=name,
             category=parent_category,
             overwrites=overwrites or None,
-            user_limit=(VC上限 if 1 <= VC上限 <= 99 else None),
+            user_limit=(vc_limit if 1 <= vc_limit <= 99 else None),
             reason=f"{ctx.author} の募集に合わせてBotが作成"
         )
         used_vc = created_vc
 
         # パスコード接続を有効化（保持）
-        if パスコード.strip():
-            VC_PASSCODES[パスコード.strip()] = created_vc.id
+        if vc_passcode.strip():
+            VC_PASSCODES[vc_passcode.strip()] = created_vc.id
 
     # ---- 埋め込みにVC情報反映 ----
     if used_vc:
@@ -418,10 +418,10 @@ async def quest_post(
         THREAD_TO_VC[thread.id] = created_vc.id
 
         # パスコード案内
-        if パスコード.strip():
+        if vc_passcode.strip():
             await thread.send(
                 f"🔐 このVCはパスコード制です。\n"
-                f"入室したい方は `/vc入室 code:{パスコード.strip()}` を実行してください。\n"
+                f"入室したい方は `/vc入室 code:{vc_passcode.strip()}` を実行してください。\n"
                 f"（実行した人だけ、このVCへの接続許可が自動で付きます）"
             )
 
