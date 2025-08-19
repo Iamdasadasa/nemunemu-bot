@@ -792,66 +792,6 @@ async def daily_cleanup_now(ctx):
                 except Exception:
                     pass
 
-
-# --- 手動クリーンアップ（管理者専用・即時実行） ---
-@bot.slash_command(
-    name="299_日次クリーン実行",
-    description="Botが作成した一時VCと関連メタ情報を即時クリーンアップします（管理者専用）",
-    default_member_permissions=discord.Permissions(administrator=True),
-    dm_permission=False
-)
-async def cleanup_now(ctx):
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
-        return
-
-    await ctx.defer(ephemeral=True)
-
-    start_count = len(TEMP_VCS)
-    removed_channels = 0
-    errors = 0
-    not_found = 0
-
-    # TEMP_VCS に記録されたVCのみを対象に削除
-    for vc_id in list(TEMP_VCS.keys()):
-        ch = bot.get_channel(vc_id)  # まずはグローバルキャッシュから取得
-        if ch is None or not isinstance(ch, discord.VoiceChannel):
-            # 念のため各ギルドにも当たってみる
-            for guild in bot.guilds:
-                _ch = guild.get_channel(vc_id)
-                if _ch and isinstance(_ch, discord.VoiceChannel):
-                    ch = _ch
-                    break
-
-        if ch and isinstance(ch, discord.VoiceChannel):
-            try:
-                await ch.delete(reason="手動クリーンアップ（管理者コマンド）")
-                removed_channels += 1
-            except Exception:
-                errors += 1
-        else:
-            # 見つからなければ not_found としてカウント（メタだけ掃除）
-            not_found += 1
-
-        # いずれにせよメタ情報側も掃除
-        TEMP_VCS.pop(vc_id, None)
-        # 逆引き/パスコードも関連分を掃除
-        for th_id, v_id in list(THREAD_TO_VC.items()):
-            if v_id == vc_id:
-                THREAD_TO_VC.pop(th_id, None)
-        for code, v_id in list(VC_PASSCODES.items()):
-            if v_id == vc_id:
-                VC_PASSCODES.pop(code, None)
-
-    await ctx.respond(
-        f"🧹 クリーンアップ完了：\n"
-        f"- 対象（開始時点）: {start_count} 件\n"
-        f"- 削除成功: {removed_channels} 件\n"
-        f"- 見つからずメタのみ削除: {not_found} 件\n"
-        f"- エラー: {errors} 件",
-        ephemeral=True
-    )
-
 # --- クリーン対象の現状確認（管理者専用） ---
 @bot.slash_command(
     name="299_クリーン状況",
