@@ -585,7 +585,7 @@ async def quest_post(
                 f"（実行した人だけ、このVCへの接続許可が自動で付きます）"
             )
 
-@募集.command(name="パスワード付きVC入室", description="パスコードを入力して、対象VCへの接続権限を付与します")
+@募集.command(name="パスワード付きボイスルーム入室", description="パスコードを入力して、対象VCへの接続権限を付与します")
 async def vc_join(ctx, code: discord.Option(str, description="配布されたパスコード")):
     vc_id = VC_PASSCODES.get(code.strip())
     if not vc_id:
