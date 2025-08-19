@@ -12,6 +12,7 @@ import google.generativeai as genai
 import tweepy
 import asyncio
 import time
+import re
 
 # --- Discord共通設定 ---
 intents = discord.Intents.default()
@@ -19,6 +20,12 @@ intents.message_content = True
 intents.members = True
 intents.reactions = True
 bot = discord.Bot(intents=intents)
+便利 = discord.SlashCommandGroup("便利", "便利ツール系")
+募集 = discord.SlashCommandGroup("募集", "募集/VC関連")
+攻略 = discord.SlashCommandGroup("攻略", "イベント・攻略情報")
+bot.add_application_command(便利)
+bot.add_application_command(募集)
+bot.add_application_command(攻略)
 TOKEN = os.getenv("TOKEN")
 
 # --- Flaskアプリ ---
@@ -51,6 +58,31 @@ HASHTAGS = """
 # リアクション対象メッセージを記録する辞書
 guide_messages = {}  # {user_id: message_id}
 
+# ---- 共通：環境変数のリストをパースする小道具 ----
+def _parse_env_list(raw: str) -> list[str]:
+    """
+    カンマ区切り または 改行区切りの文字列をリストに変換。
+    空要素は除去し、前後の空白はトリム。
+    """
+    if not raw:
+        return []
+    # カンマも改行もセパレータとして扱う
+    parts = [p.strip() for p in re.split(r"[,\n]+", raw) if p.strip()]
+    return parts
+
+# ---- 武器リスト（環境変数優先・なければ既定） ----
+_DEFAULT_WEAPONS = [
+    "大剣","太刀","片手剣","双剣","ハンマー","狩猟笛",
+    "ランス","ガンランス","スラッシュアックス","チャージアックス",
+    "操虫棍","ライトボウガン","ヘビィボウガン","弓"
+]
+WEAPON_LIST_RAW = os.getenv("WEAPON_LIST", "")
+WEAPONS = _parse_env_list(WEAPON_LIST_RAW) or _DEFAULT_WEAPONS
+
+# ---- エリアリスト（環境変数依存・既定は無し） ----
+AREA_LIST_RAW = os.getenv("AREA_LIST", "")
+AREAS = _parse_env_list(AREA_LIST_RAW)
+
 # ---- VC 管理用の一時ストア ----
 JST = timezone(timedelta(hours=9))
 # Botが作った一時VCの記録: {vc_id: {"owner_id": int, "thread_id": int, "created_at": datetime}}
@@ -65,6 +97,7 @@ ROLE_FIRST_TIMER = 1390261208782868590  # 初めてロール
 ROLE_GENERAL = 1390261772853837907      # 一般ロール ←適切なIDに変えて
 
 WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")
+VC_CATEGORY_ID = int(os.getenv("VC_CATEGORY_ID", "0"))
 REPRESENTATIVE_COUNCIL_CHANNEL_ID = int(os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID"))
 GUIDE_CHANNEL_ID = 1389290096498315364
 
@@ -212,7 +245,7 @@ def fetch_monsters():
 
 MONSTERS = fetch_monsters()
 
-@bot.slash_command(name="モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
+@便利.command(name="モンスター抽選", description="モンスターをランダムに教えてくれるよ！")
 async def monster(ctx):
     if MONSTERS:
         name = random.choice(MONSTERS)
@@ -220,14 +253,15 @@ async def monster(ctx):
     else:
         await ctx.respond("モンスターが見つからなかったよ😢")
 
-@bot.slash_command(name="モンスターリスト更新", description="モンスターリストを更新するよ")
+@便利.command(name="モンスターリスト更新", description="モンスターリストを更新するよ")
 async def update_monsters(ctx):
     await ctx.respond("🔄 モンスターリストを更新中…")
     global MONSTERS
     MONSTERS = fetch_monsters()
     await ctx.send_followup(f"🆙 モンスターリストを更新したよ！現在の数：{len(MONSTERS)}体")
 
-@bot.slash_command(name="メンバー分け", description="参加リアクションからランダムにパーティを編成するよ！")
+
+@便利.command(name="メンバー分け", description="参加リアクションからランダムにパーティを編成するよ！")
 async def party(ctx, size: int = 4):
     if size < 1:
         await ctx.respond("パーティ人数は1人以上にしてね❌", ephemeral=True)
@@ -254,6 +288,118 @@ async def party(ctx, size: int = 4):
         start = end
     result = "\n\n".join([f"🧩 パーティ {i+1}:\n" + "\n".join([f"- {u.mention}" for u in g]) for i, g in enumerate(groups)])
     await ctx.followup.send(f"✅ パーティ編成完了！\n{result}")
+
+# --- エリア抽選（便利ツール系） ---
+@便利.command(name="エリア抽選", description="環境変数 AREA_LIST からエリアをランダム抽選します")
+async def area_draw(
+    ctx,
+    数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
+    重複許可: discord.Option(bool, description="同じエリアが複数回出てもよい", required=False, default=False)
+):
+    if not AREAS:
+        await ctx.respond(
+            "❌ エリア一覧が空です。Renderの環境変数 `AREA_LIST` にエリア名をカンマまたは改行で設定してください。\n"
+            "例: 草原, 砂漠, 雪山\n再デプロイ後にお試しください。",
+            ephemeral=True
+        )
+        return
+
+    if 数 < 1:
+        await ctx.respond("抽選個数は1以上にしてね❌", ephemeral=True)
+        return
+
+    if 重複許可:
+        picks = [random.choice(AREAS) for _ in range(数)]
+    else:
+        if 数 > len(AREAS):
+            await ctx.respond(f"重複なしでは最大 {len(AREAS)} 個までです❌", ephemeral=True)
+            return
+        picks = random.sample(AREAS, k=数)
+
+    if len(picks) == 1:
+        await ctx.respond(f"🗺️ 本日のエリアは… **{picks[0]}**！")
+    else:
+        lines = "\n".join([f"- {a}" for a in picks])
+        await ctx.respond(f"🗺️ 抽選結果 ({数}件)\n{lines}")
+
+# --- エリアリロード（管理者専用） ---
+@便利.command(
+    name="エリアリロード",
+    description="エリア一覧を再読み込みします（管理者専用）",
+    default_member_permissions=discord.Permissions(administrator=True),
+    dm_permission=False
+)
+async def area_reload(ctx):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
+        return
+
+    global AREAS
+    new_raw = os.getenv("AREA_LIST", "")
+    AREAS = _parse_env_list(new_raw)
+
+    await ctx.respond(
+        "🔄 エリア一覧を再読み込みしました。\n"
+        f"現在の登録数: {len(AREAS)} 件\n"
+        "※ Renderでは環境変数の変更は通常、再デプロイ後に反映されます。",
+        ephemeral=True
+    )
+
+# --- 武器抽選（便利ツール系） ---
+@便利.command(name="武器抽選", description="武器一覧からランダムに選びます")
+async def weapon_draw(
+    ctx,
+    数: discord.Option(int, description="抽選する個数（1以上）", required=False, default=1),
+    重複許可: discord.Option(bool, description="同じ武器が複数回出てもよい", required=False, default=False)
+):
+    if not WEAPONS:
+        await ctx.respond(
+            "❌ 武器一覧が空です。Renderの環境変数 `WEAPON_LIST` に武器名をカンマまたは改行で設定してください。\n"
+            "例: 大剣, 太刀, 片手剣\n再デプロイ後にお試しください。",
+            ephemeral=True
+        )
+        return
+
+    if 数 < 1:
+        await ctx.respond("抽選個数は1以上にしてね❌", ephemeral=True)
+        return
+
+    if 重複許可:
+        picks = [random.choice(WEAPONS) for _ in range(数)]
+    else:
+        if 数 > len(WEAPONS):
+            await ctx.respond(f"重複なしでは最大 {len(WEAPONS)} 個までです❌", ephemeral=True)
+            return
+        picks = random.sample(WEAPONS, k=数)
+
+    if len(picks) == 1:
+        await ctx.respond(f"🎲 本日の武器は… **{picks[0]}**！")
+    else:
+        lines = "\n".join([f"- {w}" for w in picks])
+        await ctx.respond(f"🎲 抽選結果 ({数}件)\n{lines}")
+
+# --- 武器リロード（管理者専用） ---
+@便利.command(
+    name="武器リロード",
+    description="武器一覧を再読み込みします（管理者専用）",
+    default_member_permissions=discord.Permissions(administrator=True),
+    dm_permission=False
+)
+async def weapon_reload(ctx):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
+        return
+
+    global WEAPONS
+    new_raw = os.getenv("WEAPON_LIST", "")
+    WEAPONS = _parse_env_list(new_raw) or _DEFAULT_WEAPONS
+
+    await ctx.respond(
+        "🔄 武器一覧を再読み込みしました。\n"
+        f"現在の登録数: {len(WEAPONS)} 件\n"
+        "※ Renderでは環境変数の変更は通常、再デプロイ後に反映されます。",
+        ephemeral=True
+    )
 
 # --- イベント取得系 ---
 EVENT_URL = "https://gamewith.jp/mhwilds/484117"
@@ -297,7 +443,7 @@ def fetch_events():
             upcoming_events.append(event_info)
     return current_events, upcoming_events
 
-@bot.slash_command(name="イベント開催中", description="現在開催中のイベント一覧を表示します")
+@攻略.command(name="イベント開催中", description="現在開催中のイベント一覧を表示します")
 async def current(ctx):
     events, _ = fetch_events()
     if not events:
@@ -314,7 +460,7 @@ async def current(ctx):
         )
         await ctx.respond(msg)
 
-@bot.slash_command(name="イベント開催予定", description="今後開催予定のイベント一覧を表示します")
+@攻略.command(name="イベント開催予定", description="今後開催予定のイベント一覧を表示します")
 async def upcoming(ctx):
     _, events = fetch_events()
     if not events:
@@ -332,7 +478,7 @@ async def upcoming(ctx):
         await ctx.respond(msg)
 
 # --- クエスト募集スラッシュコマンド ---
-@bot.slash_command(name="狩り募集", description="クエスト募集メッセージを投稿します（必要ならVCも同時作成）")
+@募集.command(name="狩り募集", description="クエスト募集メッセージを投稿します（必要ならVCも同時作成）")
 async def quest_post(
     ctx,
     # === 必須（required=True）===
@@ -350,8 +496,6 @@ async def quest_post(
     募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", required=False, default=""),
     ボイスルーム_作成: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", required=False, default=False),
     ボイスルーム_名称: discord.Option(str, description="作成するVCの名前（未指定なら自動）", required=False, default=""),
-    ボイスルーム_人数上限: discord.Option(int, description="VCの人数上限（1〜99）", required=False, default=0),
-    ボイスルーム_プライベート: discord.Option(bool, description="一般には見せず入室制にする", required=False, default=True),
     ボイスルーム_パスワード: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", required=False, default="")
 ):
     await ctx.defer()
@@ -365,16 +509,29 @@ async def quest_post(
     created_vc = None
     used_vc = 場所  # 既存VCが指定されたらそれを使う
 
+    # 人数（必須）からVC上限を推定（"4人", "5名" などから数値を抽出）
+    def _extract_limit(s: str) -> int | None:
+        m = re.search(r"\d+", s)
+        if not m:
+            return None
+        n = int(m.group())
+        if 1 <= n <= 99:
+            return n
+        return None
+
+    vc_limit = _extract_limit(人数)
+
     # ---- VC自動作成 ----
     if ボイスルーム_作成:
-        parent_category = ctx.channel.category
+        parent_category = ctx.guild.get_channel(VC_CATEGORY_ID) if VC_CATEGORY_ID else ctx.channel.category
 
-        overwrites = {}
-        if ボイスルーム_プライベート or ボイスルーム_パスワード:
-            # みんなは接続不可
-            overwrites[ctx.guild.default_role] = discord.PermissionOverwrite(view_channel=False, connect=False)
-            # 発起人は入れる
-            overwrites[ctx.author] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True)
+        overwrites = None
+        if ボイスルーム_パスワード and ボイスルーム_パスワード.strip():
+            # パスコード指定時のみ非公開にして発起人に権限を付与
+            overwrites = {
+                ctx.guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+                ctx.author: discord.PermissionOverwrite(view_channel=True, connect=True, speak=True),
+            }
 
         # VC名
         name = ボイスルーム_名称.strip() if ボイスルーム_名称.strip() else f"募集VC：{ctx.author.name}"
@@ -382,8 +539,8 @@ async def quest_post(
         created_vc = await ctx.guild.create_voice_channel(
             name=name,
             category=parent_category,
-            overwrites=overwrites or None,
-            user_limit=(ボイスルーム_人数上限 if 1 <= ボイスルーム_人数上限 <= 99 else None),
+            overwrites=overwrites,
+            user_limit=vc_limit,
             reason=f"{ctx.author} の募集に合わせてBotが作成"
         )
         used_vc = created_vc
@@ -428,7 +585,7 @@ async def quest_post(
                 f"（実行した人だけ、このVCへの接続許可が自動で付きます）"
             )
 
-@bot.slash_command(name="vc入室", description="パスコードを入力して、対象VCへの接続権限を付与します")
+@募集.command(name="パスワード付きVC入室", description="パスコードを入力して、対象VCへの接続権限を付与します")
 async def vc_join(ctx, code: discord.Option(str, description="配布されたパスコード")):
     vc_id = VC_PASSCODES.get(code.strip())
     if not vc_id:
