@@ -347,11 +347,11 @@ async def quest_post(
     # === 任意（required=False）===
     場所: discord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", required=False, default=None),
     募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", required=False, default=""),
-    vc_create: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", required=False, default=False),
-    vc_name: discord.Option(str, description="作成するVCの名前（未指定なら自動）", required=False, default=""),
-    vc_limit: discord.Option(int, description="VCの人数上限（1〜99）", required=False, default=0),
-    vc_private: discord.Option(bool, description="一般には見せず入室制にする", required=False, default=True),
-    vc_passcode: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", required=False, default="")
+    VC_作成: discord.Option(bool, description="募集と同時に一時VCを作成しますか？", required=False, default=False),
+    VC_名称: discord.Option(str, description="作成するVCの名前（未指定なら自動）", required=False, default=""),
+    VC_人数上限: discord.Option(int, description="VCの人数上限（1〜99）", required=False, default=0),
+    VC_プライベート: discord.Option(bool, description="一般には見せず入室制にする", required=False, default=True),
+    VC_パスワード: discord.Option(str, description="入室パスコード（任意・指定した人だけ入れる）", required=False, default="")
 ):
     await ctx.defer()
 
