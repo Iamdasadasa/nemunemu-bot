@@ -764,6 +764,45 @@ async def daily_cleanup_vcs():
 async def before_cleanup():
     await bot.wait_until_ready()
 
+# --- 手動クリーンアップ（管理者専用・即時実行） ---
+@bot.slash_command(
+    name="299_日次クリーン実行",
+    description="Botが作成した一時VCと関連メタ情報を即時クリーンアップします（管理者専用）",
+    default_member_permissions=discord.Permissions(administrator=True),
+    dm_permission=False
+)
+async def cleanup_now(ctx):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
+        return
+
+    await ctx.defer(ephemeral=True)
+
+    removed_channels = 0
+    errors = 0
+
+    # TEMP_VCS に記録されたVCのみを対象に削除
+    for vc_id in list(TEMP_VCS.keys()):
+        found = False
+        for guild in bot.guilds:
+            ch = guild.get_channel(vc_id)
+            if ch and isinstance(ch, discord.VoiceChannel):
+                found = True
+                try:
+                    await ch.delete(reason="手動クリーンアップ（管理者コマンド）")
+                    removed_channels += 1
+                except Exception as e:
+                    errors += 1
+                break  # 見つかったら他ギルドは見ない
+        # メタ情報側も掃除
+        TEMP_VCS.pop(vc_id, None)
+
+    # パスコードとスレッド連携も全消し
+    VC_PASSCODES.clear()
+    THREAD_TO_VC.clear()
+
+    await ctx.respond(f"🧹 クリーンアップ完了：VC {removed_channels} 件削除 / エラー {errors} 件。", ephemeral=True)
+
  # --- 起動前プリフライト: /users/@me でトークン疎通確認 & レート制限尊重 ---
 def preflight_check_sync(token: str):
     url = "https://discord.com/api/v10/users/@me"
