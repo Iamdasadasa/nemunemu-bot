@@ -122,7 +122,7 @@ WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")
 VC_CATEGORY_ID = int(os.getenv("VC_CATEGORY_ID", "0"))
 REPRESENTATIVE_COUNCIL_CHANNEL_ID = int(os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID"))
 GUIDE_CHANNEL_ID = 1389290096498315364
-
+# --- 管理者ログチャンネルID ---
 ADMIN_LOG_CHANNEL_ID = int(os.getenv("ADMIN_LOG_CHANNEL_ID", "0"))
 
 # --- Flaskエンドポイント ---
@@ -744,84 +744,115 @@ async def on_thread_update(before: discord.Thread, after: discord.Thread):
                     if _vc == vc_id:
                         VC_PASSCODES.pop(code, None)
 
-# --- 管理者: 日次クリーンアップ即時実行コマンド ---
+# --- 日次クリーンアップタスク ---
+@tasks.loop(time=dtime(hour=8, minute=0, tzinfo=JST))
+async def daily_cleanup_vcs():
+    start_ts = discord.utils.utcnow()
+    print(f"[CLEANUP] ⏱️ 開始 {start_ts.isoformat()} (JST 8:00 トリガ)", flush=True)
+
+    deleted_vc_count = 0
+    not_found_count = 0
+    error_count = 0
+    target_vcs = list(TEMP_VCS.keys())
+    print(f"[CLEANUP] 対象VC数: {len(target_vcs)} / TEMP_VCS.keys()={target_vcs}", flush=True)
+
+    # 全ギルドを横断して、TEMP_VCSに記録されたチャンネルだけ削除
+    for vc_id in target_vcs:
+        deleted_this_id = False
+        for guild in bot.guilds:
+            ch = guild.get_channel(vc_id)
+            if ch and isinstance(ch, discord.VoiceChannel):
+                try:
+                    await ch.delete(reason="日次クリーンアップ（Bot作成VC）")
+                    deleted_vc_count += 1
+                    deleted_this_id = True
+                    print(f"[CLEANUP] ✅ 削除 vc_id={vc_id} guild={guild.name} ch={ch.name}", flush=True)
+                    break  # 見つけて削除できたら次のIDへ
+                except Exception as e:
+                    error_count += 1
+                    print(f"[CLEANUP] ⚠️ 削除失敗 vc_id={vc_id} guild={guild.name} err={e}", flush=True)
+        if not deleted_this_id:
+            not_found_count += 1
+            print(f"[CLEANUP] ❓ 見つからず/削除不可 vc_id={vc_id}", flush=True)
+        # メタ情報は必ず破棄
+        TEMP_VCS.pop(vc_id, None)
+
+    # パスコード・スレッド紐付けも全消し
+    pass_cnt = len(VC_PASSCODES)
+    map_cnt = len(THREAD_TO_VC)
+    VC_PASSCODES.clear()
+    THREAD_TO_VC.clear()
+    print(f"[CLEANUP] 🔑 パスコードクリア: {pass_cnt} 件 / スレッド紐付けクリア: {map_cnt} 件", flush=True)
+
+    end_ts = discord.utils.utcnow()
+    summary = (
+        f"🧹 日次クリーンアップ完了\n"
+        f"- 削除VC: {deleted_vc_count}\n"
+        f"- 未検出/不可: {not_found_count}\n"
+        f"- エラー: {error_count}\n"
+        f"- 開始: {start_ts.isoformat()} / 終了: {end_ts.isoformat()}"
+    )
+    print(f"[CLEANUP] 完了サマリ: {summary}", flush=True)
+
+    # 管理者ログチャンネルにも通知（設定されている場合のみ）
+    if 'ADMIN_LOG_CHANNEL_ID' in globals() and ADMIN_LOG_CHANNEL_ID and ADMIN_LOG_CHANNEL_ID != 0:
+        for guild in bot.guilds:
+            admin_log_ch = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if admin_log_ch:
+                try:
+                    await admin_log_ch.send(summary)
+                except Exception as e:
+                    print(f"[CLEANUP] 管理ログ送信失敗: {e}", flush=True)
+                break  # 最初に見つかったチャンネルへ1回だけ
+
+@daily_cleanup_vcs.before_loop
+async def before_cleanup():
+    print("[CLEANUP] 待機: bot.wait_until_ready() …", flush=True)
+    await bot.wait_until_ready()
+    print("[CLEANUP] bot is ready. ループ起動準備OK。", flush=True)
+
+# --- 管理者専用: 日次クリーン実行コマンド ---
 @bot.slash_command(
     name="299_日次クリーン実行",
-    description="Bot作成の一時VCを即時クリーン（管理者専用）",
+    description="日次クリーンアップを即時実行します（管理者専用）",
     default_member_permissions=discord.Permissions(administrator=True),
     dm_permission=False
 )
-async def daily_cleanup_now(ctx):
-    # パーミッション確認（念のため）
+async def manual_daily_cleanup(ctx):
     if not ctx.author.guild_permissions.administrator:
         await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
         return
 
-    await ctx.defer(ephemeral=True)
-
-    deleted = 0
-    failed = 0
-
-    # TEMP_VCS に記録されているVCだけを対象に削除
+    deleted_vc_count = 0
+    # VC削除
     for vc_id in list(TEMP_VCS.keys()):
         for guild in bot.guilds:
             ch = guild.get_channel(vc_id)
             if ch and isinstance(ch, discord.VoiceChannel):
                 try:
-                    await ch.delete(reason="手動クリーンアップ（管理者実行）")
-                    deleted += 1
+                    await ch.delete(reason="管理者による日次クリーン実行（Bot作成VC）")
+                    deleted_vc_count += 1
                 except Exception:
-                    failed += 1
-        # メタ情報を掃除
+                    pass
         TEMP_VCS.pop(vc_id, None)
-
-    # パスコード・紐付けもリセット
+    # パスコードも全消し
     VC_PASSCODES.clear()
     THREAD_TO_VC.clear()
 
-    summary = f"🧹 手動クリーン完了: 削除 {deleted} 件 / 失敗 {failed} 件\nパスコードとスレッド紐付けも初期化しました。"
-    await ctx.respond(summary, ephemeral=True)
+    result_msg = f"🧹 日次クリーンアップを実行しました。\n削除VC数: {deleted_vc_count}\nパスコード・スレッド紐付けもリセットしました。"
+    await ctx.respond(result_msg, ephemeral=True)
 
-    # 管理者ログチャンネルが設定されていれば投下
-    if ADMIN_LOG_CHANNEL_ID:
+    # 管理者ログチャンネルへも送信
+    if ADMIN_LOG_CHANNEL_ID and ADMIN_LOG_CHANNEL_ID != 0:
+        # 全ギルドから該当チャンネルを探す
         for guild in bot.guilds:
-            log_ch = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
-            if log_ch:
+            admin_log_ch = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if admin_log_ch:
                 try:
-                    await log_ch.send(summary)
+                    await admin_log_ch.send(result_msg)
                 except Exception:
                     pass
-
-# --- クリーン対象の現状確認（管理者専用） ---
-@bot.slash_command(
-    name="299_クリーン状況",
-    description="Bot管理対象の一時VCメタ情報を一覧表示（管理者専用）",
-    default_member_permissions=discord.Permissions(administrator=True),
-    dm_permission=False
-)
-async def cleanup_status(ctx):
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.respond("❌ このコマンドは管理者のみ実行できます。", ephemeral=True)
-        return
-
-    count = len(TEMP_VCS)
-    if count == 0:
-        await ctx.respond("（現在管理対象の一時VCは 0 件です）", ephemeral=True)
-        return
-
-    # 最大 20 件まで表示（長くなりすぎ防止）
-    lines = []
-    for i, (vcid, meta) in enumerate(list(TEMP_VCS.items())[:20], start=1):
-        owner = meta.get("owner_id")
-        thread = meta.get("thread_id")
-        created = meta.get("created_at")
-        lines.append(f"{i}. VCID: {vcid} / owner: {owner} / thread: {thread} / created: {created}")
-
-    more = ""
-    if count > 20:
-        more = f"\n… ほか {count-20} 件"
-
-    await ctx.respond(f"📋 管理対象 VC: {count} 件\n" + "\n".join(lines) + more, ephemeral=True)
+                break  # 最初に見つかったチャンネルだけ送信
 
  # --- 起動前プリフライト: /users/@me でトークン疎通確認 & レート制限尊重 ---
 def preflight_check_sync(token: str):
