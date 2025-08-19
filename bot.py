@@ -334,6 +334,7 @@ async def upcoming(ctx):
 # --- クエスト募集スラッシュコマンド ---
 @bot.slash_command(name="狩り募集", description="クエスト募集メッセージを投稿します（必要ならVCも同時作成）")
 async def quest_post(
+    ctx,
     # === 必須（required=True）===
     時間: discord.Option(str, description="集合・出発時間を入力（例: 21時～）", required=True),
     募集テンプレ内容: discord.Option(
