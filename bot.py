@@ -208,7 +208,7 @@ async def on_member_join(member):
     if log_channel:
         mention_link = f"<@{member.id}>"  # メンションリンク（通知なし）
         await log_channel.send(
-            f"管理メンバーの皆さま、お手数ですが新たに\n\\{mention_link}\nさんがサーバーに参加されました。\n"
+            f"管理メンバーの皆さま、新たに{member.mention} さんがサーバーに参加されました。\n"
             "よろしくお願いいたします。"
         )
 
@@ -685,66 +685,7 @@ async def vc_join(ctx, code: discord.Option(str, description="配布されたパ
         await ctx.respond("⚠️ 権限不足で許可を付与できませんでした。", ephemeral=True)
 
 
-# --- VC削除コマンド ---
-@bot.slash_command(name="103_vc削除", description="Botが作った一時VCを削除します（作成者または管理者）")
-async def vc_delete(
-    ctx,
-    対象: discord.Option(discord.VoiceChannel, description="削除するVC（未指定なら現在地かスレッド関連を自動推定）", required=False, default=None)
-):
-    # 推定ロジック：
-    target_ch = 対象
 
-    # 1) 未指定なら、実行者が今いるVC
-    if target_ch is None and isinstance(ctx.author, discord.Member) and ctx.author.voice and ctx.author.voice.channel:
-        if isinstance(ctx.author.voice.channel, discord.VoiceChannel):
-            target_ch = ctx.author.voice.channel
-
-    # 2) それでも無ければ、実行されたチャンネルがスレッドで、紐づくVCがあればそれ
-    if target_ch is None and isinstance(ctx.channel, discord.Thread):
-        vc_id = THREAD_TO_VC.get(ctx.channel.id)
-        if vc_id:
-            ch = ctx.guild.get_channel(vc_id)
-            if isinstance(ch, discord.VoiceChannel):
-                target_ch = ch
-
-    if target_ch is None or not isinstance(target_ch, discord.VoiceChannel):
-        await ctx.respond("❌ 対象のVCが特定できません。オプションでVCを指定するか、VCに入ってから実行してください。", ephemeral=True)
-        return
-
-    # Botが作ったVCか確認
-    meta = TEMP_VCS.get(target_ch.id)
-    if not meta:
-        await ctx.respond("⚠️ このVCはBot管理対象ではありません（手動作成か、既にメタ情報が破棄されています）。", ephemeral=True)
-        return
-
-    owner_id = meta.get("owner_id")
-    is_admin = ctx.author.guild_permissions.administrator
-    if not (is_admin or ctx.author.id == owner_id):
-        await ctx.respond("❌ このVCを削除できるのは作成者か管理者のみです。", ephemeral=True)
-        return
-
-    # 削除実行
-    try:
-        await target_ch.delete(reason=f"{ctx.author} による /103_vc削除 実行")
-    except discord.Forbidden:
-        await ctx.respond("⚠️ 権限不足で削除できませんでした（Botに『チャンネルを管理』権限が必要です）。", ephemeral=True)
-        return
-    except Exception as e:
-        await ctx.respond(f"❌ 削除中にエラー: {e}", ephemeral=True)
-        return
-
-    # メタ掃除
-    TEMP_VCS.pop(target_ch.id, None)
-    # 逆引き
-    for th_id, vcid in list(THREAD_TO_VC.items()):
-        if vcid == target_ch.id:
-            THREAD_TO_VC.pop(th_id, None)
-    # パスコード紐付けも掃除
-    for code, vcid in list(VC_PASSCODES.items()):
-        if vcid == target_ch.id:
-            VC_PASSCODES.pop(code, None)
-
-    await ctx.respond("🗑️ VCを削除しました。", ephemeral=True)
 
 @bot.event
 async def on_thread_update(before: discord.Thread, after: discord.Thread):
@@ -774,16 +715,13 @@ async def daily_cleanup_vcs():
     not_found_count = 0
     error_count = 0
 
-    # マーカーや名称でも拾う
-    target_ids = set(TEMP_VCS.keys())
+    # マーカー（センチネルロール）だけで判定
+    target_ids = set()
     for guild in bot.guilds:
         sentinel = _get_sentinel_role(guild)
         for ch in guild.channels:
             if isinstance(ch, discord.VoiceChannel):
-                marked = False
                 if sentinel is not None and sentinel in ch.overwrites:
-                    marked = True
-                if (ch.id in TEMP_VCS) or marked or ch.name.startswith("募集VC："):
                     target_ids.add(ch.id)
 
     print(f"[CLEANUP] 対象VC数: {len(target_ids)} / ids={list(target_ids)}", flush=True)
