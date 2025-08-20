@@ -118,6 +118,21 @@ VC_PASSCODES: dict[str, int] = {}
 ROLE_FIRST_TIMER = 1390261208782868590  # 初めてロール
 ROLE_GENERAL = 1390261772853837907      # 一般ロール ←適切なIDに変えて
 
+# 環境変数 TEMP_VC_SENTINEL_ROLE_ID に BotTempVC のロールIDを設定してください
+
+# --- 一時VC判定用センチネルロール（存在するだけでOK。誰にも付与しない想定） ---
+# 使い方:
+# 1) Discordサーバーに空のロール（例: BotTempVC）を作る
+# 2) そのロールIDを環境変数 TEMP_VC_SENTINEL_ROLE_ID に設定
+# 3) Botが作成する一時VCにはこのロールの権限上書きを付ける（本コードで自動）
+# → クリーンアップはこの上書きがあるVCを検出して削除できる
+TEMP_VC_SENTINEL_ROLE_ID = int(os.getenv("TEMP_VC_SENTINEL_ROLE_ID", "0"))
+
+def _get_sentinel_role(guild: discord.Guild) -> discord.Role | None:
+    if not TEMP_VC_SENTINEL_ROLE_ID:
+        return None
+    return guild.get_role(TEMP_VC_SENTINEL_ROLE_ID)
+
 WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")
 VC_CATEGORY_ID = int(os.getenv("VC_CATEGORY_ID", "0"))
 REPRESENTATIVE_COUNCIL_CHANNEL_ID = int(os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID"))
@@ -589,6 +604,11 @@ async def quest_post(
                 ctx.author: author_overwrite,
             }
 
+        # センチネルロールがあれば、空の上書きを付与（マーカー用途。特別な権限は与えない）
+        sentinel_role = _get_sentinel_role(ctx.guild)
+        if sentinel_role is not None:
+            overwrites[sentinel_role] = discord.PermissionOverwrite()
+
         # VC名
         name = ボイスルーム_名称.strip() if ボイスルーム_名称.strip() else f"募集VC：{ctx.author.name}"
 
@@ -753,21 +773,32 @@ async def daily_cleanup_vcs():
     deleted_vc_count = 0
     not_found_count = 0
     error_count = 0
-    target_vcs = list(TEMP_VCS.keys())
-    print(f"[CLEANUP] 対象VC数: {len(target_vcs)} / TEMP_VCS.keys()={target_vcs}", flush=True)
 
-    # 全ギルドを横断して、TEMP_VCSに記録されたチャンネルだけ削除
-    for vc_id in target_vcs:
+    # マーカーや名称でも拾う
+    target_ids = set(TEMP_VCS.keys())
+    for guild in bot.guilds:
+        sentinel = _get_sentinel_role(guild)
+        for ch in guild.channels:
+            if isinstance(ch, discord.VoiceChannel):
+                marked = False
+                if sentinel is not None and sentinel in ch.overwrites:
+                    marked = True
+                if (ch.id in TEMP_VCS) or marked or ch.name.startswith("募集VC："):
+                    target_ids.add(ch.id)
+
+    print(f"[CLEANUP] 対象VC数: {len(target_ids)} / ids={list(target_ids)}", flush=True)
+
+    for vc_id in list(target_ids):
         deleted_this_id = False
         for guild in bot.guilds:
             ch = guild.get_channel(vc_id)
             if ch and isinstance(ch, discord.VoiceChannel):
                 try:
-                    await ch.delete(reason="日次クリーンアップ（Bot作成VC）")
+                    await ch.delete(reason="日次クリーンアップ（Bot作成VC/マーカー付きVC）")
                     deleted_vc_count += 1
                     deleted_this_id = True
                     print(f"[CLEANUP] ✅ 削除 vc_id={vc_id} guild={guild.name} ch={ch.name}", flush=True)
-                    break  # 見つけて削除できたら次のIDへ
+                    break
                 except Exception as e:
                     error_count += 1
                     print(f"[CLEANUP] ⚠️ 削除失敗 vc_id={vc_id} guild={guild.name} err={e}", flush=True)
@@ -824,35 +855,42 @@ async def manual_daily_cleanup(ctx):
         return
 
     deleted_vc_count = 0
-    # VC削除
-    for vc_id in list(TEMP_VCS.keys()):
+
+    # 対象候補を収集
+    target_ids = set(TEMP_VCS.keys())
+    for guild in bot.guilds:
+        sentinel = _get_sentinel_role(guild)
+        for ch in guild.channels:
+            if isinstance(ch, discord.VoiceChannel):
+                marked = False
+                if sentinel is not None and sentinel in ch.overwrites:
+                    marked = True
+                if (ch.id in TEMP_VCS) or marked or ch.name.startswith("募集VC："):
+                    target_ids.add(ch.id)
+
+    # 削除処理
+    for vc_id in list(target_ids):
         for guild in bot.guilds:
             ch = guild.get_channel(vc_id)
             if ch and isinstance(ch, discord.VoiceChannel):
                 try:
-                    await ch.delete(reason="管理者による日次クリーン実行（Bot作成VC）")
+                    await ch.delete(reason="管理者による日次クリーン実行（Bot作成VC/マーカー付きVC）")
                     deleted_vc_count += 1
+                    break
                 except Exception:
                     pass
         TEMP_VCS.pop(vc_id, None)
-    # パスコードも全消し
+
+    # パスコード/スレッド紐付けも全消し
     VC_PASSCODES.clear()
     THREAD_TO_VC.clear()
 
-    result_msg = f"🧹 日次クリーンアップを実行しました。\n削除VC数: {deleted_vc_count}\nパスコード・スレッド紐付けもリセットしました。"
+    result_msg = (
+        f"🧹 日次クリーンアップを実行しました。\n"
+        f"削除VC数: {deleted_vc_count}\n"
+        f"パスコード・スレッド紐付けもリセットしました。"
+    )
     await ctx.respond(result_msg, ephemeral=True)
-
-    # 管理者ログチャンネルへも送信
-    if ADMIN_LOG_CHANNEL_ID and ADMIN_LOG_CHANNEL_ID != 0:
-        # 全ギルドから該当チャンネルを探す
-        for guild in bot.guilds:
-            admin_log_ch = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
-            if admin_log_ch:
-                try:
-                    await admin_log_ch.send(result_msg)
-                except Exception:
-                    pass
-                break  # 最初に見つかったチャンネルだけ送信
 
  # --- 起動前プリフライト: /users/@me でトークン疎通確認 & レート制限尊重 ---
 def preflight_check_sync(token: str):
