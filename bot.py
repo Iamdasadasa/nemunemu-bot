@@ -546,7 +546,7 @@ async def quest_post(
     人数: discord.Option(str, description="募集人数（例: 4人, 5名）", required=True),
 
     # === 任意（required=False）===
-    場所: discord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", required=False, default=None),
+    場所: d iscord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", required=False, default=None),
     募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", required=False, default=""),
     ボイスルーム_作成: discord.Option(str, description="募集と同時に一時VCを作成しますか？（有効/無効）", choices=["有効", "無効"], required=False, default="無効"),
     ボイスルーム_名称: discord.Option(str, description="作成するVCの名前（未指定なら自動）", required=False, default=""),
@@ -638,14 +638,35 @@ async def quest_post(
     resp = await ctx.respond(embed=embed)
     original_msg = await resp.original_response()
 
-    # 募集スレッドを作る
-    thread = await original_msg.create_thread(
-        name=f"{ctx.author.name}の募集スレッド",
-        auto_archive_duration=60  # 1時間
-    )
+    # 募集スレッドを作る（常に作成／公開スレッド）
+    thread = None
+    try:
+        thread = await original_msg.create_thread(
+            name=f"{ctx.author.name}の募集スレッド",
+            auto_archive_duration=60  # 1時間
+        )
+        # スレッドに初期メッセージを投稿（要点まとめ）
+        try:
+            summary_lines = [
+                f"⏰ 時間: **{時間}**",
+                f"📝 内容: **{内容}**",
+                f"👥 人数: **{人数}**",
+            ]
+            if used_vc:
+                summary_lines.append(f"📍 場所: **{used_vc.name}**")
+            if 募集カスタム内容:
+                summary_lines.append(f"💬 補足: {募集カスタム内容}")
+            await thread.send("\n".join(summary_lines))
+        except Exception:
+            pass
+    except discord.Forbidden:
+        # 権限不足などで作成できない場合はフォールバック無し（ログだけ）
+        print("[QUEST_POST] スレッド作成に失敗（Forbidden）", flush=True)
+    except Exception as e:
+        print(f"[QUEST_POST] スレッド作成に失敗: {e}", flush=True)
 
     # VCとスレッドのひも付け（Bot作成VCのみ）
-    if created_vc:
+    if created_vc and thread:
         TEMP_VCS[created_vc.id] = {
             "owner_id": ctx.author.id,
             "thread_id": thread.id,
