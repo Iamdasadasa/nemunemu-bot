@@ -546,7 +546,7 @@ async def quest_post(
     人数: discord.Option(str, description="募集人数（例: 4人, 5名）", required=True),
 
     # === 任意（required=False）===
-    場所: d iscord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", required=False, default=None),
+    場所: discord.Option(discord.VoiceChannel, description="既存VCを使う場合はここで選択", required=False, default=None),
     募集カスタム内容: discord.Option(str, description="自由メモ（テンプレを上書き）", required=False, default=""),
     ボイスルーム_作成: discord.Option(str, description="募集と同時に一時VCを作成しますか？（有効/無効）", choices=["有効", "無効"], required=False, default="無効"),
     ボイスルーム_名称: discord.Option(str, description="作成するVCの名前（未指定なら自動）", required=False, default=""),
