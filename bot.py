@@ -635,16 +635,23 @@ async def quest_post(
     if 募集カスタム内容:
         embed.add_field(name="💬 補足", value=f"→ {募集カスタム内容}", inline=False)
 
-    resp = await ctx.respond(embed=embed)
-    original_msg = await resp.original_response()
+    # Defer 後は followup.send を使う（respond ではなく）
+    original_msg = await ctx.followup.send(embed=embed)
 
-    # 募集スレッドを作る（常に作成／公開スレッド）
+    # 募集スレッドを作る（常に作成／公開スレッド）。
+    # スラコマ実行場所がすでにスレッドなら、そのスレッドを流用。
     thread = None
     try:
-        thread = await original_msg.create_thread(
-            name=f"{ctx.author.name}の募集スレッド",
-            auto_archive_duration=60  # 1時間
-        )
+        if isinstance(ctx.channel, discord.Thread):
+            thread = ctx.channel
+        else:
+            # TextChannel 側から message=original_msg を指定して作成（ライブラリ互換性が高い）
+            thread = await ctx.channel.create_thread(
+                name=f"{ctx.author.name}の募集スレッド",
+                message=original_msg,
+                auto_archive_duration=60,  # 1時間
+                type=discord.ChannelType.public_thread
+            )
         # スレッドに初期メッセージを投稿（要点まとめ）
         try:
             summary_lines = [
@@ -660,8 +667,8 @@ async def quest_post(
         except Exception:
             pass
     except discord.Forbidden:
-        # 権限不足などで作成できない場合はフォールバック無し（ログだけ）
-        print("[QUEST_POST] スレッド作成に失敗（Forbidden）", flush=True)
+        # 権限不足（Create Public Threads 等）で作成できない場合
+        print("[QUEST_POST] スレッド作成に失敗（Forbidden: create_thread 権限不足の可能性）", flush=True)
     except Exception as e:
         print(f"[QUEST_POST] スレッド作成に失敗: {e}", flush=True)
 
