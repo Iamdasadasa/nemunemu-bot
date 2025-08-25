@@ -540,7 +540,7 @@ async def quest_post(
     募集テンプレ内容: discord.Option(
         str,
         description="よくある募集内容から選んでね（カスタムがあれば優先）",
-        choices=["バウンティ消化", "クエストお手伝い", "HR上げ", "素材集め", "金策", "写真撮りたい！", "募集カスタムに記載"],
+        choices=["バウンティ消化", "クエストお手伝い", "HR上げ", "素材集め", "金策", "写真撮りたい！", "お護り集め/神護り周回", "募集カスタムに記載"],
         required=True
     ),
     人数: discord.Option(str, description="募集人数（例: 4人, 5名）", required=True),
