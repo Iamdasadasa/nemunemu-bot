@@ -345,7 +345,7 @@ async def on_member_remove(member: discord.Member):
     try:
         admin_log_ch = member.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
         if admin_log_ch:
-            await admin_log_ch.send(f"🚪 {member.display_name} さんがサーバーを退出しました。（ID: {member.id}）")
+            await admin_log_ch.send(f"🗑️{member.mention} さんがサーバーを退出しました。（ID: {member.id}）")
     except Exception:
         pass
     try:
@@ -365,7 +365,7 @@ async def on_member_remove(member: discord.Member):
             # ログに通知
             log_channel = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
             if log_channel:
-                await log_channel.send(f"🗑️ {member.display_name} さんが退出したため、案内メッセージ（ID: {msg_id}）を削除しました。")
+                await log_channel.send(f"🗑️{member.mention} さんが退出したため、案内メッセージ（ID: {msg_id}）を削除しました。")
         except discord.NotFound:
             # 既に削除済み
             pass
