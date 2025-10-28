@@ -1002,7 +1002,7 @@ async def on_ready():
         print("✅ on_ready() に入りました！")
         print(f"✅ ログインユーザー: {bot.user} (ID: {bot.user.id})")
         await bot.sync_commands()
-        print("✅ スラッシュコマンドの同期に成功しました")
+        print("✅ スラッシュコマンドの同期に成功しました_20251028")
         if not daily_cleanup_vcs.is_running():
             daily_cleanup_vcs.start()
     except Exception as e:
