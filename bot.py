@@ -136,6 +136,8 @@ def _get_sentinel_role(guild: discord.Guild) -> discord.Role | None:
 WELCOME_MESSAGE_EXTRA = os.getenv("WELCOME_MESSAGE_EXTRA", "")
 VC_CATEGORY_ID = int(os.getenv("VC_CATEGORY_ID", "0"))
 REPRESENTATIVE_COUNCIL_CHANNEL_ID = int(os.getenv("REPRESENTATIVE_COUNCIL_CHANNEL_ID"))
+# 挨拶（自己紹介）チャンネルID（環境変数 INTRO_CHANNEL_ID を推奨。未設定時は 0）
+INTRO_CHANNEL_ID = int(os.getenv("INTRO_CHANNEL_ID", "0"))
 GUIDE_CHANNEL_ID = 1389290096498315364
 # --- 管理者ログチャンネルID ---
 ADMIN_LOG_CHANNEL_ID = int(os.getenv("ADMIN_LOG_CHANNEL_ID", "0"))
@@ -276,17 +278,109 @@ async def on_raw_reaction_add(payload):
     channel = bot.get_channel(payload.channel_id)
 
     try:
+        # 1) ロール更新
         if role_first in member.roles:
             await member.remove_roles(role_first)
         if role_general:
             await member.add_roles(role_general)
+
+        # 2) 元メッセージを削除（案内終了）
         msg = await channel.fetch_message(message_id)
         await msg.delete()
         del guide_messages[user_id]
+
+        # 3) 挨拶チャンネルへの歓迎メッセージ＋スレッド作成
+        try:
+            if INTRO_CHANNEL_ID:
+                intro_ch = guild.get_channel(INTRO_CHANNEL_ID)
+            else:
+                intro_ch = None
+
+            if intro_ch and isinstance(intro_ch, (discord.TextChannel, discord.ForumChannel)):
+                # ウェルカム本文（「強制じゃない」スタンスを明示）
+                welcome_text = (
+                    f"🎉 新メンバーが来てくれました！\n"
+                    f"{member.mention} さん、これからよろしくね！\n\n"
+                    "よければこの投稿からつながるスレッドで、軽く『こんにちは〜』『好きな武器』など一言どうぞ 🙌\n"
+                    "※挨拶は任意です。読む専でもOK！"
+                )
+
+                # まず投稿 → そこからスレッドを作る
+                post = await intro_ch.send(welcome_text)
+
+                # スレッド名は分かりやすく
+                thread_name = f"👋 歓迎：{member.display_name}"
+                created_thread = await intro_ch.create_thread(
+                    name=thread_name,
+                    message=post,
+                    auto_archive_duration=1440,  # 24時間で自動アーカイブ（サーバー設定に依存）
+                    type=discord.ChannelType.public_thread
+                )
+
+                # スレッドの最初のメッセージ
+                try:
+                    await created_thread.send(
+                        "みんなで新メンバーに挨拶しよう！\n"
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            # 歓迎投稿が失敗しても致命的ではないため、ログだけ残す
+            log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
+            if log_channel:
+                await log_channel.send(f"⚠️ 歓迎メッセージ/スレッド作成に失敗しました: {e}")
     except Exception as e:
         log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
         if log_channel:
             await log_channel.send(f"⚠️ リアクションによるロール変更エラー: {e}")
+
+# --- 退出時：未処理の案内メッセージをクリーンアップ ---
+@bot.event
+async def on_member_remove(member: discord.Member):
+    """
+    新規参加者がリアクションせずに退出した場合、
+    その人宛てに残っている案内メッセージ（guide_messagesの対象）を削除する。
+    """
+    # まずは退出自体を管理者ログに通知
+    try:
+        admin_log_ch = member.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+        if admin_log_ch:
+            await admin_log_ch.send(f"🚪 {member.display_name} さんがサーバーを退出しました。（ID: {member.id}）")
+    except Exception:
+        pass
+    try:
+        user_id = member.id
+        msg_id = guide_messages.pop(user_id, None)
+        if not msg_id:
+            return  # 記録なし → 何もしない
+
+        guild = member.guild
+        guide_channel = guild.get_channel(GUIDE_CHANNEL_ID)
+        if not guide_channel:
+            return
+
+        try:
+            msg = await guide_channel.fetch_message(msg_id)
+            await msg.delete()
+            # ログに通知
+            log_channel = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if log_channel:
+                await log_channel.send(f"🗑️ {member.display_name} さんが退出したため、案内メッセージ（ID: {msg_id}）を削除しました。")
+        except discord.NotFound:
+            # 既に削除済み
+            pass
+        except Exception as e:
+            log_channel = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if log_channel:
+                await log_channel.send(f"⚠️ 退出者の案内メッセージ削除に失敗しました: {e}")
+    except Exception as e:
+        # ここで例外を握りつぶしてBot停止を避ける
+        try:
+            log_channel = member.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+            if log_channel:
+                await log_channel.send(f"⚠️ on_member_remove 内部エラー: {e}")
+        except Exception:
+            pass
 
 # --- モンスター関連コマンド ---
 def fetch_monsters():
