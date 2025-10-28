@@ -341,11 +341,11 @@ async def on_member_remove(member: discord.Member):
     新規参加者がリアクションせずに退出した場合、
     その人宛てに残っている案内メッセージ（guide_messagesの対象）を削除する。
     """
-    # まずは退出自体を管理者ログに通知
+    # まずは退出自体を管理メンバーログに通知
     try:
-        admin_log_ch = member.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
-        if admin_log_ch:
-            await admin_log_ch.send(f"🗑️{member.mention} さんがサーバーを退出しました。（ID: {member.id}）")
+        kanrilog_channel = member.guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
+        if kanrilog_channel:
+            await kanrilog_channel.send(f"🗑️{member.mention} さんがサーバーを退出しました。（ID: {member.id}）")
     except Exception:
         pass
     try:
