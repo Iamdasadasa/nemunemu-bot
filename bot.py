@@ -320,7 +320,7 @@ async def on_raw_reaction_add(payload):
                     created_thread = await intro_ch.create_thread(
                         name=thread_name,
                         message=post,
-                        auto_archive_duration=1440,
+                        auto_archive_duration=180,
                         type=discord.ChannelType.public_thread
                     )
                     try:
@@ -409,6 +409,36 @@ async def on_raw_reaction_remove(payload):
     if guild:
         await _update_recruit_embed(guild, message_id)
 # --- 募集メッセージ埋め込み・警告ヘルパ ---
+#
+# --- 募集停止/再開コントロール（作成者/管理者のみ） ---
+class StopToggleView(discord.ui.View):
+    def __init__(self, guild_id: int, message_id: int, timeout: float | None = 600):
+        super().__init__(timeout=timeout)
+        self.guild_id = guild_id
+        self.message_id = message_id
+
+    @discord.ui.button(label="⛔ 募集停止 / 再開", style=discord.ButtonStyle.danger)
+    async def toggle_stop(self, button: discord.ui.Button, interaction: discord.Interaction):
+        guild = interaction.client.get_guild(self.guild_id)
+        if not guild:
+            await interaction.response.send_message("⚠️ サーバー情報を取得できませんでした。", ephemeral=True)
+            return
+        data = RECRUITS.get(self.message_id)
+        if not data:
+            await interaction.response.send_message("⚠️ 対象の募集情報が見つかりませんでした。", ephemeral=True)
+            return
+
+        # 権限チェック：作成者 or 管理者のみ
+        if (interaction.user.id != data["owner_id"]) and (not interaction.user.guild_permissions.administrator):
+            await interaction.response.send_message("⚠️ この操作は募集の作成者または管理者のみ可能です。", ephemeral=True)
+            return
+
+        # トグルして更新
+        data["closed"] = not data.get("closed", False)
+        await _update_recruit_embed(guild, self.message_id)
+        status = "停止" if data["closed"] else "再開"
+        await interaction.response.send_message(f"✅ 募集を**{status}**しました。", ephemeral=True)
+
 # --- モンスター関連コマンド ---
 async def _warn_once(member: discord.Member, message_id: int, code: str, text: str):
     """
@@ -860,13 +890,14 @@ async def quest_post(
         embed.add_field(name="💬 補足", value=f"→ {募集カスタム内容}", inline=False)
 
     # Defer 後は followup.send を使う（respond ではなく）
-    original_msg = await ctx.followup.send(embed=embed)
+    instruction_text = "参加者募集中  ｜  ✋ 参加　↩️ 参加取消　⛔ 募集停止（作成者のみ）"
+    original_msg = await ctx.followup.send(content=instruction_text, embed=embed)
 
     # --- リアクション参加セットアップ ---
     try:
         await original_msg.add_reaction(EMOJI_JOIN)
         await original_msg.add_reaction(EMOJI_LEAVE)
-        await original_msg.add_reaction(EMOJI_CLOSE)
+        # await original_msg.add_reaction(EMOJI_CLOSE)  # ⛔ は公開メッセージには付けない
     except Exception:
         pass
 
@@ -880,6 +911,17 @@ async def quest_post(
         "participants": set(),
         "closed": False,
     }
+
+    # 募集作成者向けコントローラ（エフェメラル）
+    try:
+        view = StopToggleView(ctx.guild.id, original_msg.id, timeout=3600)
+        await ctx.followup.send(
+            content=f"⛔ この募集を停止/再開できます → [募集メッセージへ]({original_msg.jump_url})",
+            view=view,
+            ephemeral=True
+        )
+    except Exception:
+        pass
 
     # 募集スレッドを作る（常に作成／公開スレッド）。
     # スラコマ実行場所がすでにスレッドなら、そのスレッドを流用。
