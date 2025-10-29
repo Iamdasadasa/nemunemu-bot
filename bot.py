@@ -114,6 +114,22 @@ THREAD_TO_VC: dict[int, int] = {}
 # パスコード→VCID（シンプル版：コードは平文でメモリ保持）
 VC_PASSCODES: dict[str, int] = {}
 
+# --- 募集メッセージ管理（リアクション参加用） ---
+# { message_id: {
+#   "owner_id": int, "channel_id": int,
+#   "time_text": str, "content_text": str, "vc_name": str|None,
+#   "limit": int|None, "participants": set[int], "closed": bool
+# } }
+RECRUITS: dict[int, dict] = {}
+
+EMOJI_JOIN  = "✋"   # 参加
+EMOJI_LEAVE = "↩️"   # 参加取り消し
+EMOJI_CLOSE = "⛔"   # 募集停止（作成者 or 管理者のみ）
+
+# 注意喚起の過剰送信防止用（(message_id, user_id, code) -> last_ts）
+WARN_COOLDOWNS: dict[tuple[int, int, str], float] = {}
+WARN_COOLDOWN_SEC = 60.0
+
 # ロールID（設定済みかもだけど確認）
 ROLE_FIRST_TIMER = 1390261208782868590  # 初めてロール
 ROLE_GENERAL = 1390261772853837907      # 一般ロール ←適切なIDに変えて
@@ -253,86 +269,200 @@ async def on_member_join(member):
             if log_channel:
                 await log_channel.send(f"⚠️ 案内メッセージ送信に失敗しました: {e}")
 
-# --- リアクションで権限付与の処理 ---
+# --- リアクション処理（オンボーディング + 募集参加） ---
 @bot.event
 async def on_raw_reaction_add(payload):
     if payload.user_id == bot.user.id:
-        return  # Bot自身のリアクションは無視
+        return
 
     user_id = payload.user_id
     message_id = payload.message_id
-
-    if user_id not in guide_messages:
-        return  # 対象メッセージでない
-
-    if guide_messages[user_id] != message_id:
-        return  # 自分の案内メッセージじゃない
-
     guild = bot.get_guild(payload.guild_id)
-    member = guild.get_member(user_id)
-    if not member:
+    if not guild:
         return
 
-    role_first = guild.get_role(ROLE_FIRST_TIMER)
-    role_general = guild.get_role(ROLE_GENERAL)
-    channel = bot.get_channel(payload.channel_id)
-
+    # ===== ① オンボーディング（案内メッセージ） =====
     try:
-        # 1) ロール更新
-        if role_first in member.roles:
-            await member.remove_roles(role_first)
-        if role_general:
-            await member.add_roles(role_general)
+        if (user_id in guide_messages) and (guide_messages[user_id] == message_id):
+            member = guild.get_member(user_id)
+            if not member:
+                return
+            role_first = guild.get_role(ROLE_FIRST_TIMER)
+            role_general = guild.get_role(ROLE_GENERAL)
+            channel = bot.get_channel(payload.channel_id)
 
-        # 2) 元メッセージを削除（案内終了）
-        msg = await channel.fetch_message(message_id)
-        await msg.delete()
-        del guide_messages[user_id]
+            # ロール更新
+            if role_first in member.roles:
+                await member.remove_roles(role_first)
+            if role_general:
+                await member.add_roles(role_general)
 
-        # 3) 挨拶チャンネルへの歓迎メッセージ＋スレッド作成
-        try:
-            if INTRO_CHANNEL_ID:
-                intro_ch = guild.get_channel(INTRO_CHANNEL_ID)
-            else:
-                intro_ch = None
+            # 案内メッセージ削除
+            try:
+                msg = await channel.fetch_message(message_id)
+                await msg.delete()
+            except Exception:
+                pass
+            guide_messages.pop(user_id, None)
 
-            if intro_ch and isinstance(intro_ch, (discord.TextChannel, discord.ForumChannel)):
-                # ウェルカム本文（「強制じゃない」スタンスを明示）
-                welcome_text = (
-                    f"🎉 新メンバーが来てくれました！\n"
-                    f"{member.mention} さん、これからよろしくね！\n\n"
-                    "よければこの投稿からつながるスレッドで、軽く『こんにちは〜』『好きな武器』など一言どうぞ 🙌\n"
-                    "※挨拶は任意です。読む専でもOK！"
-                )
-
-                # まず投稿 → そこからスレッドを作る
-                post = await intro_ch.send(welcome_text)
-
-                # スレッド名は分かりやすく
-                thread_name = f"👋 歓迎：{member.display_name}"
-                created_thread = await intro_ch.create_thread(
-                    name=thread_name,
-                    message=post,
-                    auto_archive_duration=1440,  # 24時間で自動アーカイブ（サーバー設定に依存）
-                    type=discord.ChannelType.public_thread
-                )
-
-                # スレッドの最初のメッセージ
-                try:
-                    await created_thread.send(
-                        "みんなで新メンバーに挨拶しよう！\n"
+            # 歓迎メッセージ＋スレッド
+            try:
+                intro_ch = guild.get_channel(INTRO_CHANNEL_ID) if INTRO_CHANNEL_ID else None
+                if intro_ch and isinstance(intro_ch, (discord.TextChannel, discord.ForumChannel)):
+                    welcome_text = (
+                        f"🎉 新メンバーが来てくれました！\n"
+                        f"{member.mention} さん、これからよろしくね！\n\n"
+                        "よければこの投稿からつながるスレッドで、軽く『こんにちは〜』『好きな武器』など一言どうぞ 🙌\n"
+                        "※挨拶は任意です。読む専でもOK！"
                     )
-                except Exception:
-                    pass
-        except Exception as e:
-            # 歓迎投稿が失敗しても致命的ではないため、ログだけ残す
-            log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
-            if log_channel:
-                await log_channel.send(f"⚠️ 歓迎メッセージ/スレッド作成に失敗しました: {e}")
+                    post = await intro_ch.send(welcome_text)
+                    thread_name = f"👋 歓迎：{member.display_name}"
+                    created_thread = await intro_ch.create_thread(
+                        name=thread_name,
+                        message=post,
+                        auto_archive_duration=1440,
+                        type=discord.ChannelType.public_thread
+                    )
+                    try:
+                        await created_thread.send("🎉 みんなも新メンバーに挨拶してね！")
+                    except Exception:
+                        pass
+            except Exception as e:
+                log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
+                if log_channel:
+                    await log_channel.send(f"⚠️ 歓迎メッセージ/スレッド作成に失敗しました: {e}")
+            return
     except Exception as e:
         log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
         if log_channel:
-            await log_channel.send(f"⚠️ リアクションによるロール変更エラー: {e}")
+            await log_channel.send(f"⚠️ リアクション処理(オンボ)で例外: {e}")
+
+    # ===== ② 募集メッセージのリアクション参加 =====
+    if message_id not in RECRUITS:
+        return
+
+    data = RECRUITS[message_id]
+    emoji = str(payload.emoji)
+    member = guild.get_member(user_id)
+    if not member or member.bot:
+        return
+
+    # Util: リアクションを取り消す
+    async def _undo(emoji_to_remove: str):
+        try:
+            ch = guild.get_channel(data["channel_id"])
+            msg = await ch.fetch_message(message_id)
+            await msg.remove_reaction(emoji_to_remove, member)
+        except Exception:
+            pass
+
+    updated = False
+
+    if emoji == EMOJI_JOIN:
+        # 募集停止中
+        if data.get("closed"):
+            await _undo(EMOJI_JOIN)
+            await _warn_once(member, message_id, "closed", "⛔ 現在この募集は停止中です。再開をお待ちください。")
+            return
+        # すでに参加済み
+        if member.id in data["participants"]:
+            await _undo(EMOJI_JOIN)
+            await _warn_once(member, message_id, "dup_join", "ℹ️ すでに参加登録されています。")
+            return
+        # 上限チェック
+        limit = data.get("limit")
+        if (limit is not None) and (len(data["participants"]) >= limit):
+            await _undo(EMOJI_JOIN)
+            await _warn_once(member, message_id, "full", f"📮 満員です（{limit}人）。空きが出たらもう一度お試しください。")
+            return
+        # 参加登録
+        data["participants"].add(member.id)
+        updated = True
+
+    elif emoji == EMOJI_LEAVE:
+        if member.id not in data["participants"]:
+            await _undo(EMOJI_LEAVE)
+            await _warn_once(member, message_id, "not_joined", "ℹ️ まだ参加登録されていません。")
+            return
+        data["participants"].remove(member.id)
+        updated = True
+
+    elif emoji == EMOJI_CLOSE:
+        if (member.id == data["owner_id"]) or (member.guild_permissions.administrator):
+            data["closed"] = not data.get("closed", False)
+            updated = True
+        else:
+            await _undo(EMOJI_CLOSE)
+            await _warn_once(member, message_id, "no_auth", "⚠️ この募集の停止/再開を切り替えられるのは、作成者か管理者のみです。")
+            return
+
+    if updated:
+        await _update_recruit_embed(guild, message_id)
+
+# --- リアクションが外れたときも同期 ---
+@bot.event
+async def on_raw_reaction_remove(payload):
+    message_id = payload.message_id
+    if message_id not in RECRUITS:
+        return
+    guild = bot.get_guild(payload.guild_id)
+    if guild:
+        await _update_recruit_embed(guild, message_id)
+# --- 募集メッセージ埋め込み・警告ヘルパ ---
+# --- モンスター関連コマンド ---
+async def _warn_once(member: discord.Member, message_id: int, code: str, text: str):
+    """
+    同じ内容の警告DMを短時間に何度も送らないための補助。
+    """
+    now = time.time()
+    key = (message_id, member.id, code)
+    last = WARN_COOLDOWNS.get(key, 0.0)
+    if now - last < WARN_COOLDOWN_SEC:
+        return
+    WARN_COOLDOWNS[key] = now
+    try:
+        await member.send(text)
+    except Exception:
+        # DMが閉じられている場合は無視
+        pass
+
+async def _update_recruit_embed(guild: discord.Guild, message_id: int):
+    """募集メッセージの埋め込みを最新化する"""
+    data = RECRUITS.get(message_id)
+    if not data:
+        return
+    ch = guild.get_channel(data["channel_id"])
+    if not ch:
+        return
+    try:
+        msg = await ch.fetch_message(message_id)
+    except Exception:
+        return
+
+    limit = data["limit"]
+    members = [guild.get_member(uid) for uid in data["participants"]]
+    members = [m for m in members if m is not None]
+    count = len(members)
+
+    members_text = "\n".join([f"- {m.mention}" for m in members]) if members else "（まだいません）"
+
+    title = f"🎯 クエスト募集（by <@{data['owner_id']}>)"
+    color = 0xAAAAAA if data.get("closed") else 0x4CAF50
+    embed = discord.Embed(title=title, color=color)
+    embed.add_field(name="⏰ 時間", value=f"→ __{data['time_text']}__", inline=False)
+    embed.add_field(name="📝 内容", value=f"→ __{data['content_text']}__", inline=False)
+    if data["vc_name"]:
+        embed.add_field(name="📍 場所", value=f"→ __{data['vc_name']}__", inline=False)
+    embed.add_field(name="👥 人数", value=f"→ __{limit if limit else '指定なし'}__", inline=False)
+    embed.add_field(name="📊 募集状況", value=f"__{count}__ / __{limit if limit else '∞'}__", inline=True)
+    embed.add_field(name="🧑‍🤝‍🧑 参加者一覧", value=members_text, inline=False)
+    if data.get("closed"):
+        embed.set_footer(text="⛔ この募集は停止中です")
+
+    try:
+        await msg.edit(embed=embed)
+    except Exception:
+        pass
 
 # --- 退出時：未処理の案内メッセージをクリーンアップ ---
 @bot.event
@@ -731,6 +861,25 @@ async def quest_post(
 
     # Defer 後は followup.send を使う（respond ではなく）
     original_msg = await ctx.followup.send(embed=embed)
+
+    # --- リアクション参加セットアップ ---
+    try:
+        await original_msg.add_reaction(EMOJI_JOIN)
+        await original_msg.add_reaction(EMOJI_LEAVE)
+        await original_msg.add_reaction(EMOJI_CLOSE)
+    except Exception:
+        pass
+
+    RECRUITS[original_msg.id] = {
+        "owner_id": ctx.author.id,
+        "channel_id": ctx.channel.id,
+        "time_text": 時間,
+        "content_text": 内容,
+        "vc_name": (used_vc.name if used_vc else None),
+        "limit": vc_limit,
+        "participants": set(),
+        "closed": False,
+    }
 
     # 募集スレッドを作る（常に作成／公開スレッド）。
     # スラコマ実行場所がすでにスレッドなら、そのスレッドを流用。
