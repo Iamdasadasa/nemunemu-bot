@@ -320,7 +320,7 @@ async def on_raw_reaction_add(payload):
                     created_thread = await intro_ch.create_thread(
                         name=thread_name,
                         message=post,
-                        auto_archive_duration=180,
+                        auto_archive_duration=60,
                         type=discord.ChannelType.public_thread
                     )
                     try:
