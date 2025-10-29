@@ -393,7 +393,12 @@ async def on_raw_reaction_add(payload):
             updated = True
         else:
             await _undo(EMOJI_CLOSE)
-            await _warn_once(member, message_id, "no_auth", "⚠️ この募集の停止/再開を切り替えられるのは、作成者か管理者のみです。")
+            try:
+                ch = guild.get_channel(data["channel_id"])
+                if ch:
+                    await _temp_notice(ch, member, "⚠️ 作成者以外は停止できません。", seconds=6.0)
+            except Exception:
+                pass
             return
 
     if updated:
@@ -408,6 +413,22 @@ async def on_raw_reaction_remove(payload):
     guild = bot.get_guild(payload.guild_id)
     if guild:
         await _update_recruit_embed(guild, message_id)
+async def _temp_notice(channel: discord.abc.Messageable, user: discord.Member, text: str, seconds: float = 6.0):
+    """
+    チャンネルに一時的な注意メッセージを表示して、数秒後に自動削除する。
+    リアクションイベントではエフェメラル返信が使えないための代替。
+    """
+    try:
+        msg = await channel.send(f"{user.mention} {text}")
+        async def _delete_later(m: discord.Message, s: float):
+            try:
+                await asyncio.sleep(s)
+                await m.delete()
+            except Exception:
+                pass
+        asyncio.create_task(_delete_later(msg, seconds))
+    except Exception:
+        pass
 # --- 募集メッセージ埋め込み・警告ヘルパ ---
 #
 # --- 募集停止/再開コントロール（作成者/管理者のみ） ---
@@ -897,7 +918,7 @@ async def quest_post(
     try:
         await original_msg.add_reaction(EMOJI_JOIN)
         await original_msg.add_reaction(EMOJI_LEAVE)
-        # await original_msg.add_reaction(EMOJI_CLOSE)  # ⛔ は公開メッセージには付けない
+        await original_msg.add_reaction(EMOJI_CLOSE)  # ⛔ は公開メッセージには付けない
     except Exception:
         pass
 
@@ -911,17 +932,6 @@ async def quest_post(
         "participants": set(),
         "closed": False,
     }
-
-    # 募集作成者向けコントローラ（エフェメラル）
-    try:
-        view = StopToggleView(ctx.guild.id, original_msg.id, timeout=3600)
-        await ctx.followup.send(
-            content=f"⛔ この募集を停止/再開できます → [募集メッセージへ]({original_msg.jump_url})",
-            view=view,
-            ephemeral=True
-        )
-    except Exception:
-        pass
 
     # 募集スレッドを作る（常に作成／公開スレッド）。
     # スラコマ実行場所がすでにスレッドなら、そのスレッドを流用。
