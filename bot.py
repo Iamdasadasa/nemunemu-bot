@@ -16,6 +16,8 @@ import re
 
 import sys, logging
 
+from collections import deque
+
 # --- Stdout immediate flush & logging setup ---
 try:
     # Render等の環境でログを即時出力
@@ -114,6 +116,11 @@ THREAD_TO_VC: dict[int, int] = {}
 # パスコード→VCID（シンプル版：コードは平文でメモリ保持）
 VC_PASSCODES: dict[str, int] = {}
 
+# --- 新規メンバー急増（レイド）検知用設定 ---
+# 例: 1分以内に3人以上のjoinで発動
+JOIN_WINDOW_SEC  = int(os.getenv("JOIN_WINDOW_SEC", "60"))
+JOIN_THRESHOLD   = int(os.getenv("JOIN_THRESHOLD", "3"))     # 閾値（例：1分以内に3人以上）
+
 # --- 募集メッセージ管理（リアクション参加用） ---
 # { message_id: {
 #   "owner_id": int, "channel_id": int,
@@ -157,6 +164,15 @@ INTRO_CHANNEL_ID = int(os.getenv("INTRO_CHANNEL_ID", "0"))
 GUIDE_CHANNEL_ID = 1389290096498315364
 # --- 管理者ログチャンネルID ---
 ADMIN_LOG_CHANNEL_ID = int(os.getenv("ADMIN_LOG_CHANNEL_ID", "0"))
+
+# --- RaidGuard 設定（環境変数で調整可） ---
+JOIN_WINDOW_SEC  = int(os.getenv("JOIN_WINDOW_SEC", "60"))   # 何秒以内を集計（例：60s）
+JOIN_THRESHOLD   = int(os.getenv("JOIN_THRESHOLD", "3"))     # 閾値（例：1分に3人）
+MAX_TIMEOUT      = timedelta(days=28)                        # Discordの上限（実質最大）
+
+# --- 直近参加状況を保持（メモリ） ---
+JOIN_TIMES: deque[discord.utils.datetime] = deque()
+RECENT_JOIN_IDS: deque[int] = deque()
 
 # --- Flaskエンドポイント ---
 @app.route("/")
@@ -215,9 +231,92 @@ async def on_resumed():
 async def on_disconnect():
     print("[GATEWAY] on_disconnect (切断)", flush=True)
 
+def _is_gibberish_english(name: str) -> bool:
+    """
+    英字のみの無意味列をざっくり検知（誤検知を避けるため控えめ）
+    条件:
+      - 英字のみ
+      - 長すぎ（>=16）/ 母音率が極端 / 子音4連 など
+    """
+    s = (name or "").strip().lower()
+    if not re.fullmatch(r"[a-z]+", s):
+        return False
+    if len(s) >= 16:
+        return True
+    vowels = sum(c in "aeiou" for c in s)
+    ratio = vowels / len(s) if s else 0
+    if ratio < 0.15 or ratio > 0.85:
+        return True
+    if re.search(r"[bcdfghjklmnpqrstvwxyz]{4,}", s):
+        return True
+    # よくある語片は除外（簡易ホワイト）
+    if any(k in s for k in ("hunter","dragon","monster","wild","nemu","maria","leo")):
+        return False
+    return len(s) >= 10
+
+async def _timeout_and_admin_log(member: discord.Member, reason: str):
+    """最大28日タイムアウトを1回だけ付与し、ADMIN_LOG_CHANNEL_IDへ通知"""
+    until = discord.utils.utcnow() + MAX_TIMEOUT
+    # まずタイムアウト適用
+    try:
+        await member.edit(communication_disabled_until=until, reason=reason)
+    except Exception as e:
+        # 失敗しても管理チャンネルに報告して戻る
+        ch = member.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+        if ch:
+            try:
+                await ch.send(f"⚠️ タイムアウト失敗: {member.mention} / 理由: {reason} / err: {e}")
+            except Exception:
+                pass
+        return
+
+    # 通知Embed
+    ch = member.guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+    if ch:
+        try:
+            emb = discord.Embed(
+                title="🚨 Timeout applied",
+                description=f"{member.mention} (`{member.id}`) に **最大28日** のタイムアウトを付与しました。",
+                color=0xE67E22,
+                timestamp=discord.utils.utcnow(),
+            )
+            emb.add_field(name="Reason", value=reason, inline=False)
+            emb.add_field(name="Username", value=f"`{member}`", inline=True)
+            emb.add_field(name="Account", value=f"<t:{int(member.created_at.replace(tzinfo=timezone.utc).timestamp())}:R>", inline=True)
+            await ch.send(embed=emb)
+        except Exception:
+            pass
+
 # --- 新規メンバー時の処理 ---
 @bot.event
 async def on_member_join(member):
+    # --- 参加直後のセーフティチェック（無意味英字列 / 短時間大量参加） ---
+    now = discord.utils.utcnow()
+    JOIN_TIMES.append(now)
+    RECENT_JOIN_IDS.append(member.id)
+
+    # 古い履歴を捨てる
+    while JOIN_TIMES and (now - JOIN_TIMES[0]).total_seconds() > JOIN_WINDOW_SEC:
+        JOIN_TIMES.popleft()
+        if RECENT_JOIN_IDS:
+            RECENT_JOIN_IDS.popleft()
+
+    # 1) 無意味英単語列ユーザー名（英字のみ）の簡易検知 → 最大タイムアウト & 管理通知
+    if _is_gibberish_english(member.name):
+        await _timeout_and_admin_log(member, "Suspicious name pattern (gibberish)")
+        return  # 以降のオンボーディング処理は行わない
+
+    # 2) RAID疑い: JOIN_WINDOW_SEC秒以内にJOIN_THRESHOLD人
+    if len(JOIN_TIMES) >= JOIN_THRESHOLD:
+        suspect_ids = list(RECENT_JOIN_IDS)[-JOIN_THRESHOLD:]
+        for uid in suspect_ids:
+            m = member.guild.get_member(uid)
+            if m:
+                await _timeout_and_admin_log(m, f"Raid suspected: {JOIN_THRESHOLD} joins in {JOIN_WINDOW_SEC}s")
+        # 連続発火を避けるためリセット
+        JOIN_TIMES.clear()
+        RECENT_JOIN_IDS.clear()
+        return  # この参加者のオンボーディングは中止
     guild = member.guild
     role = guild.get_role(ROLE_FIRST_TIMER)
     log_channel = guild.get_channel(REPRESENTATIVE_COUNCIL_CHANNEL_ID)
