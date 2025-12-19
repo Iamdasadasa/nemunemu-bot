@@ -50,7 +50,7 @@ app = Flask(__name__)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 PROMPT = os.getenv("PROMPT_TEXT", "")
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(model_name="models/gemini-2.0-flash")
+model = genai.GenerativeModel(model_name="models/gemini-2.5-flash")
 
 # --- X (Twitter API) 認証 ---
 client = tweepy.Client(
